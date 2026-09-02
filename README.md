@@ -145,15 +145,9 @@ assets/                         Bundled assets (logo)
 ## Contributing
 
 Contributions are very welcome — this project is better with more hands on it.
+Feel free to open an issue or submit a pull request.
 
-Here's the general flow:
-
-1. **Fork** this repository and create a branch for your change.
-2. Make your changes, then run `flutter analyze` and `flutter test` to make sure
-   nothing is broken.
-3. Open a **pull request** with a clear description of what you changed and why.
-
-Not sure where to start? Some ideas on the radar:
+Some ideas on the radar:
 
 - **AI auto-tagging** — use on-device/cloud models to tag photos by people,
   places, and objects (the tags/comments system was built with this in mind).
