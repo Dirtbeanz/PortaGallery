@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PortaGallery
+Comment=View and manage photos on your external drive
+Exec=photo_gallery
+Icon=photo_gallery
+Categories=Graphics;Photography;Viewer;
+Terminal=false
+StartupWMClass=photo_gallery
