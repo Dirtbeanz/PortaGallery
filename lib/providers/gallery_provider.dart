@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -71,14 +72,13 @@ class GalleryProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final scanned = await PhotoService.scanDirectory(path);
+      final scanned = await Isolate.run(() => PhotoService.scanDirectory(path));
       for (final photo in scanned) {
         photo.isFavorite = _favoritePaths.contains(photo.path);
       }
       _photos = scanned;
       _albums = _buildAlbums();
       isConfigured = true;
-      computeAspectRatios();
     } finally {
       isLoading = false;
       notifyListeners();
@@ -183,16 +183,6 @@ class GalleryProvider extends ChangeNotifier {
     _aspectRatios[photo.path] = ratio;
     photo.aspectRatio = ratio;
     return ratio;
-  }
-
-  Future<void> computeAspectRatios() async {
-    for (final photo in _photos) {
-      if (_aspectRatios.containsKey(photo.path)) continue;
-      final ratio = PhotoService.readAspectRatio(photo.path);
-      _aspectRatios[photo.path] = ratio;
-      photo.aspectRatio = ratio;
-    }
-    notifyListeners();
   }
 
   List<({String header, List<PhotoItem> photos})> get dateSections {

@@ -118,6 +118,7 @@ class PhotoGrid extends StatelessWidget {
             );
           },
           childCount: rows.length,
+          addAutomaticKeepAlives: false,
         ),
       ),
     );

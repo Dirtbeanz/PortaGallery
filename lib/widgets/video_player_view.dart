@@ -45,8 +45,7 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
   Widget build(BuildContext context) {
     if (_error) {
       return const Center(
-        child: Icon(Icons.broken_image_outlined,
-            color: Colors.white54, size: 64),
+        child: Icon(Icons.broken_image_outlined, color: Colors.white54, size: 64),
       );
     }
     if (!_ready) {
@@ -55,49 +54,10 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
       );
     }
 
-    return Center(
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Video(
-            controller: _controller,
-            controls: NoVideoControls,
-            fill: Colors.black,
-          ),
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _player.playOrPause(),
-            child: StreamBuilder<bool>(
-              stream: _player.stream.playing,
-              initialData: true,
-              builder: (context, snapshot) {
-                final playing = snapshot.data ?? false;
-                return AnimatedOpacity(
-                  opacity: playing ? 0.0 : 1.0,
-                  duration: const Duration(milliseconds: 200),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        colors: [
-                          Colors.black.withValues(alpha: 0.0),
-                          Colors.black.withValues(alpha: 0.35),
-                        ],
-                      ),
-                    ),
-                    child: Icon(
-                      playing
-                          ? Icons.pause_circle_filled
-                          : Icons.play_circle_fill,
-                      color: Colors.white,
-                      size: 80,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+    return Video(
+      controller: _controller,
+      controls: AdaptiveVideoControls,
+      fill: Colors.black,
     );
   }
 }

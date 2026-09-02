@@ -339,7 +339,7 @@ class _ZoomSlider extends StatelessWidget {
         ),
         const SizedBox(width: 2),
         SizedBox(
-          width: 80,
+          width: 180,
           child: SliderTheme(
             data: SliderTheme.of(context).copyWith(trackHeight: 3),
             child: Slider(
