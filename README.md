@@ -1,41 +1,44 @@
-# Photo Gallery
+# PortaGallery
 
 A modern, cross-platform photo gallery for browsing the photos stored on an
 external drive. One Flutter codebase that ships as a **Linux AppImage** and an
 **Android APK**.
 
-It's designed to be a clean replacement for browsing a USB drive through a file
-manager: point it at the folder that holds your photos and you get a real
-gallery experience.
+It's a clean replacement for digging through a USB drive with a file manager:
+point it at the folder that holds your photos and you get a real gallery
+experience — albums, favorites, search, zoom, tags, and more.
 
 ## Features
 
-- **Gallery grid** — a responsive masonry layout with thumbnails (photos and
-  video badges).
+- **Gallery grid with zoom** — pinch-zoom-style slider that resizes tiles from a
+  dense overview to large, full-aspect-ratio photos.
+- **Smart date separators** — photos grouped under headers that get broader as
+  you zoom out (day → month → year).
 - **Albums** — folders on the drive become albums automatically; create new
   albums and move photos into them.
 - **Favorites** — heart any photo; persisted in a local SQLite database.
 - **Sorting** — by name, date modified, or size (ascending/descending).
-- **Search** — filter by filename.
-- **Full-screen viewer** — swipe between photos, pinch-to-zoom.
+- **Search** — across filenames, tags, and comments.
+- **Tags & comments** — attach tags and a note to any photo, then search by
+  them. Built with future AI auto-tagging in mind.
+- **Full-screen viewer** — pinch-to-zoom, swipe between photos, on-screen arrow
+  buttons and keyboard `←`/`→` navigation, and an EXIF metadata panel.
 - **Video playback** — powered by [media_kit](https://pub.dev/packages/media_kit)
-  on both Linux and Android.
+  on both Linux and Android, with a clear play badge in the grid.
 - **Metadata** — view EXIF details (dimensions, date taken, camera, ISO,
   aperture, shutter, focal length, GPS).
-- **Rename** photos.
+- **Rename** and **delete** (single or in bulk).
 - **Import / Export** — copy photos into the library (upload) or save a copy to
   your Downloads folder (download).
 - **Share** via the platform share sheet.
 - **Multi-select** — long-press to select several photos and batch favorite,
   move, share, or delete.
-- **Delete** with confirmation.
 - **Dark / light theme** following the system setting.
 
 ## How it works
 
-On first launch you choose the folder that contains your photos (you can pick a
-folder with the file dialog, or type a path such as
-`/media/yourname/DRIVE/Pictures`).
+On first launch you choose the folder that contains your photos (pick it with
+the file dialog, or type a path such as `/media/yourname/DRIVE/Pictures`).
 
 The chosen path is stored in a config file:
 
@@ -50,15 +53,15 @@ a mounted USB drive.
 
 ### Linux AppImage
 
-Grab `dist/PhotoGallery-x86_64.AppImage`, make it executable, and run:
+Grab `dist/PortaGallery-x86_64.AppImage`, make it executable, and run:
 
 ```sh
-chmod +x PhotoGallery-x86_64.AppImage
-./PhotoGallery-x86_64.AppImage
+chmod +x PortaGallery-x86_64.AppImage
+./PortaGallery-x86_64.AppImage
 ```
 
 Video playback on Linux uses the system's `libmpv` (install `mpv` if it's
-missing, e.g. `sudo pacman -S mpv` on Arch, `sudo apt install libmpv-dev` on
+missing: `sudo pacman -S mpv` on Arch, `sudo apt install libmpv-dev` on
 Debian/Ubuntu).
 
 ### Android APK
@@ -71,8 +74,9 @@ onto your device.
 ### Requirements
 
 - [Flutter](https://flutter.dev) SDK (stable, 3.29 or newer)
-- Linux desktop build: `clang`, `ninja`, `pkg-config`, GTK3 headers
-- Android build: Android SDK (platform 36, build-tools 36) and JDK 17
+- Linux desktop build: `clang`, `ninja`, `pkg-config`, GTK3 headers, and `mpv`
+  for video playback
+- Android build: Android SDK (platform 36, build-tools 36), NDK 27, and JDK 17
   (Java 26 will not work with the Gradle version used here)
 - `appimagetool` (for packaging the AppImage)
 
@@ -82,8 +86,8 @@ onto your device.
 ./packaging/build_appimage.sh
 ```
 
-The script builds the Flutter Linux bundle and packages it into
-`dist/PhotoGallery-x86_64.AppImage`.
+The script builds the Flutter Linux bundle, stamps in the app icon, and packages
+everything into `dist/PortaGallery-x86_64.AppImage`.
 
 ### Android APK
 
@@ -99,6 +103,7 @@ Plugin, and bundled video libraries).
 ### Tests
 
 ```sh
+flutter analyze
 flutter test
 ```
 
@@ -107,22 +112,24 @@ flutter test
 ```
 lib/
   main.dart                     App entry point
-  models/                       PhotoItem, Album, SortMode, PhotoMetadata
+  models/                       PhotoItem, Album, SortMode, PhotoMetadata, PhotoNotes
   providers/gallery_provider.dart  Central state (ChangeNotifier)
   services/
     config_service.dart         Config file (library path)
-    database_service.dart       SQLite favorites
-    photo_service.dart          Directory scanning, import/export
-    metadata_service.dart       EXIF reading, dimensions
+    database_service.dart       SQLite (favorites + tags/comments)
+    photo_service.dart          Directory scanning, import/export, dimensions
+    metadata_service.dart       EXIF reading
     permission_service.dart     Android storage permissions
   screens/                      Home, photos, albums, favorites, viewer, settings
-  widgets/                      Video player, path dialog, photo grid
+  widgets/                      Video player, tags editor, path dialog, photo grid
 packaging/
   build_appimage.sh             AppImage build script
-  AppRun, photo_gallery.desktop  AppImage metadata
+  AppRun, photo_gallery.desktop AppImage metadata
+  logo.png                      App icon/logo source
 android/                        Android platform project
 linux/                          Linux platform project
 test/                           Unit tests
+assets/                         Bundled assets (logo)
 ```
 
 ## Config file format
@@ -134,6 +141,29 @@ test/                           Unit tests
   "libraryPath": "/path/to/your/photos"
 }
 ```
+
+## Contributing
+
+Contributions are very welcome — this project is better with more hands on it.
+
+Here's the general flow:
+
+1. **Fork** this repository and create a branch for your change.
+2. Make your changes, then run `flutter analyze` and `flutter test` to make sure
+   nothing is broken.
+3. Open a **pull request** with a clear description of what you changed and why.
+
+Not sure where to start? Some ideas on the radar:
+
+- **AI auto-tagging** — use on-device/cloud models to tag photos by people,
+  places, and objects (the tags/comments system was built with this in mind).
+- **Video thumbnails** instead of the static play badge.
+- **Slideshow** mode and more import/export options (e.g. cloud storage).
+- Better **Android USB-drive** handling without requiring "All files access".
+- A Windows or macOS build.
+
+Found a bug? Open an **issue** and describe what happened, your OS, and steps to
+reproduce it.
 
 ## License
 
