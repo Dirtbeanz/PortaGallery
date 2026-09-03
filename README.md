@@ -159,6 +159,19 @@ Some ideas on the radar:
 Found a bug? Open an **issue** and describe what happened, your OS, and steps to
 reproduce it.
 
+## A note on how this is built
+
+PortaGallery was developed with significant help from AI coding assistants — but
+AI alone doesn't make good software. Human input — your bug reports, feature
+requests, and code contributions — is what will actually make this project
+great. If you spot something wrong or have an idea, please speak up.
+
+## Support
+
+If you like this project and want to support its development:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/dirtbeanz59)
+
 ## License
 
 [MIT](LICENSE)

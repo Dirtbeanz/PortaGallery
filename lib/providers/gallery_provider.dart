@@ -1,14 +1,17 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../models/photo_item.dart';
 import '../models/photo_notes.dart';
 import '../services/config_service.dart';
 import '../services/database_service.dart';
 import '../services/photo_service.dart';
+import '../services/thumbnail_service.dart';
 
 class GalleryProvider extends ChangeNotifier {
   final ConfigService _config = ConfigService();
@@ -26,6 +29,12 @@ class GalleryProvider extends ChangeNotifier {
 
   Map<String, PhotoNotes> _notes = {};
   PhotoNotes getNotes(String path) => _notes[path] ?? const PhotoNotes();
+
+  Map<String, String> _thumbPaths = {};
+  String? thumbPathOrNull(PhotoItem photo) => _thumbPaths[photo.path];
+  final Set<String> _thumbPending = {};
+  final Set<String> _thumbInFlight = {};
+  bool _thumbing = false;
 
   String? libraryPath;
   bool isConfigured = false;
@@ -79,10 +88,90 @@ class GalleryProvider extends ChangeNotifier {
       _photos = scanned;
       _albums = _buildAlbums();
       isConfigured = true;
+      await _loadExistingThumbnails();
     } finally {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> _loadExistingThumbnails() async {
+    final dir = await ThumbnailService.cacheDir();
+    final map = <String, String>{};
+    var i = 0;
+    for (final photo in _photos) {
+      final candidate =
+          p.join(dir.path, '${ThumbnailService.key(photo)}.jpg');
+      if (File(candidate).existsSync()) {
+        map[photo.path] = candidate;
+        final dims = PhotoService.readDimensions(candidate);
+        if (dims != null && dims.$2 > 0) {
+          final ratio = dims.$1 / dims.$2;
+          _aspectRatios[photo.path] = ratio;
+          photo.aspectRatio = ratio;
+        }
+      }
+      if (++i % 200 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+    _thumbPaths = map;
+    _thumbPending.clear();
+  }
+
+  void requestThumbnails(List<PhotoItem> photos) {
+    var added = false;
+    for (final photo in photos) {
+      if (_thumbPaths.containsKey(photo.path)) continue;
+      if (_thumbPending.contains(photo.path)) continue;
+      if (_thumbInFlight.contains(photo.path)) continue;
+      _thumbPending.add(photo.path);
+      added = true;
+    }
+    if (added) {
+      _drainThumbQueue();
+    }
+  }
+
+  Future<void> _drainThumbQueue() async {
+    if (_thumbing) return;
+    _thumbing = true;
+    try {
+      while (_thumbPending.isNotEmpty) {
+        final path = _thumbPending.first;
+        _thumbPending.remove(path);
+        final photo = _photoByPath(path);
+        if (photo == null) continue;
+        _thumbInFlight.add(path);
+        try {
+          final ok = await ThumbnailService.generate(photo);
+          if (ok) {
+            final target = await ThumbnailService.expectedPath(photo);
+            if (await File(target).exists()) {
+              _thumbPaths[path] = target;
+              final dims = PhotoService.readDimensions(target);
+              if (dims != null && dims.$2 > 0) {
+                final ratio = dims.$1 / dims.$2;
+                _aspectRatios[path] = ratio;
+                photo.aspectRatio = ratio;
+              }
+              notifyListeners();
+            }
+          }
+        } finally {
+          _thumbInFlight.remove(path);
+        }
+      }
+    } finally {
+      _thumbing = false;
+    }
+  }
+
+  PhotoItem? _photoByPath(String path) {
+    for (final photo in _photos) {
+      if (photo.path == path) return photo;
+    }
+    return null;
   }
 
   List<Album> _buildAlbums() {
@@ -187,12 +276,16 @@ class GalleryProvider extends ChangeNotifier {
 
   List<({String header, List<PhotoItem> photos})> get dateSections {
     final source = showFavoritesOnly ? favorites : _photos;
-    final list = _applySort(_applySearch(source));
+    return buildDateSections(_applySort(_applySearch(source)));
+  }
+
+  List<({String header, List<PhotoItem> photos})> buildDateSections(
+      List<PhotoItem> list) {
     if (list.isEmpty) return [];
 
     final groups = <String, List<PhotoItem>>{};
     for (final photo in list) {
-      final key = _dateKey(photo.modifiedAt);
+      final key = dateKey(photo.modifiedAt);
       groups.putIfAbsent(key, () => []).add(photo);
     }
 
@@ -200,54 +293,53 @@ class GalleryProvider extends ChangeNotifier {
       ..sort((a, b) => b.key.compareTo(a.key));
 
     return entries
-        .map((e) => (header: e.key, photos: e.value))
+        .map((e) => (header: _sectionLabel(e.key), photos: e.value))
         .toList();
   }
 
-  String _dateKey(DateTime dt) {
+  String dateKey(DateTime dt) {
     switch (_zoomLevel) {
       case 0:
-        return '${dt.year}';
       case 1:
         return '${dt.year}-${_pad(dt.month)}';
       default:
-        return _formatDateHeader(dt);
+        return '${dt.year}-${_pad(dt.month)}-${_pad(dt.day)}';
     }
+  }
+
+  static const List<String> _monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+
+  String _sectionLabel(String key) {
+    final parts = key.split('-');
+    if (parts.length == 2) {
+      final month = int.tryParse(parts[1]);
+      if (month != null && month >= 1 && month <= 12) {
+        return '${_monthNames[month - 1]} ${parts[0]}';
+      }
+    }
+    if (parts.length == 3) {
+      final month = int.tryParse(parts[1]);
+      final day = int.tryParse(parts[2]);
+      if (month != null && day != null && month >= 1 && month <= 12) {
+        return '${_monthNames[month - 1]} $day, ${parts[0]}';
+      }
+    }
+    return key;
   }
 
   String _pad(int n) => n.toString().padLeft(2, '0');
 
-  String _formatDateHeader(DateTime dt) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(dt.year, dt.month, dt.day);
-    final diff = today.difference(day).inDays;
-
-    final label = '${dt.year}-${_pad(dt.month)}-${_pad(dt.day)}';
-    if (diff == 0) return 'Today — $label';
-    if (diff == 1) return 'Yesterday — $label';
-    return label;
-  }
-
   int columnsForZoom(double screenWidth) {
-    int base;
-    if (screenWidth > 1200) {
-      base = 6;
-    } else if (screenWidth > 800) {
-      base = 5;
-    } else if (screenWidth > 500) {
-      base = 4;
-    } else {
-      base = 3;
-    }
-
     switch (_zoomLevel) {
       case 0:
-        return base + 2;
+        return 8;
       case 1:
-        return base + 1;
+        return 5;
       case 2:
-        return base;
+        return 4;
       default:
         if (screenWidth > 600) return 3;
         return 2;
@@ -325,6 +417,25 @@ class GalleryProvider extends ChangeNotifier {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<int> exportPhotos(List<PhotoItem> photos) async {
+    Directory? dir;
+    try {
+      dir = await getDownloadsDirectory();
+    } catch (_) {
+      dir = null;
+    }
+    if (dir == null) return 0;
+
+    var count = 0;
+    for (final photo in photos) {
+      final target = p.join(dir.path, photo.name);
+      if (await exportPhoto(photo, target, overwrite: true) != null) {
+        count++;
+      }
+    }
+    return count;
   }
 
   Future<void> deletePhoto(PhotoItem photo) async {

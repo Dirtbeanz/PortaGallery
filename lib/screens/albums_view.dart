@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../models/photo_item.dart';
 import '../providers/gallery_provider.dart';
-import 'photo_viewer_screen.dart';
+import 'album_detail_screen.dart';
 
 class AlbumsView extends StatelessWidget {
   const AlbumsView({super.key});
@@ -152,12 +152,9 @@ class _AlbumCard extends StatelessWidget {
       return;
     }
 
-    final provider = context.read<GalleryProvider>();
-    final photos = provider.getPhotosForAlbum(album.path);
-
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PhotoViewerScreen(photos: photos, initialIndex: 0),
+        builder: (_) => AlbumDetailScreen(album: album),
       ),
     );
   }

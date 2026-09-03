@@ -4,6 +4,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../models/photo_item.dart';
 import '../providers/gallery_provider.dart';
+import '../widgets/zoom_slider.dart';
 import 'photo_grid.dart';
 import 'photo_viewer_screen.dart';
 
@@ -16,13 +17,12 @@ class PhotosView extends StatefulWidget {
 
 class _PhotosViewState extends State<PhotosView> {
   final Set<String> _selected = {};
+  bool _selectionMode = false;
 
   List<PhotoItem> get _selectedPhotos {
     final provider = context.read<GalleryProvider>();
     return provider.photos.where((p) => _selected.contains(p.path)).toList();
   }
-
-  bool get _selecting => _selected.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -39,24 +39,51 @@ class _PhotosViewState extends State<PhotosView> {
 
     return Column(
       children: [
-        _Toolbar(provider: provider),
+        _Toolbar(
+          provider: provider,
+          selectionMode: _selectionMode,
+          onToggleSelection: _toggleSelectionMode,
+        ),
         Expanded(
           child: PhotoGrid(
             sections: sections,
             columns: columns,
             squareTiles: squareTiles,
             selectedPaths: _selected,
-            onPhotoTap: _selecting ? _toggleSelect : _openViewer,
+            onPhotoTap: _selectionMode ? _toggleSelect : _openViewer,
             onPhotoLongPress: _enterSelection,
+            viewerPhotos: provider.visiblePhotos,
           ),
         ),
-        if (_selecting) _buildSelectionBar(context, provider),
+        if (_selectionMode) _buildSelectionBar(context, provider),
       ],
     );
   }
 
+  void _toggleSelectionMode() {
+    setState(() {
+      _selectionMode = !_selectionMode;
+      if (!_selectionMode) _selected.clear();
+    });
+  }
+
+  void _selectAll(GalleryProvider provider) {
+    setState(() {
+      if (_selected.length == provider.visiblePhotos.length) {
+        _selected.clear();
+      } else {
+        _selected
+          ..clear()
+          ..addAll(provider.visiblePhotos.map((p) => p.path));
+      }
+    });
+  }
+
   void _enterSelection(PhotoItem photo) {
-    setState(() => _selected.add(photo.path));
+    setState(() {
+      _selectionMode = true;
+      _selected.add(photo.path);
+    });
   }
 
   void _toggleSelect(PhotoItem photo) {
@@ -82,10 +109,14 @@ class _PhotosViewState extends State<PhotosView> {
     );
   }
 
-  void _clearSelection() => setState(() => _selected.clear());
+  void _clearSelection() => setState(() {
+        _selected.clear();
+        _selectionMode = false;
+      });
 
   Widget _buildSelectionBar(BuildContext context, GalleryProvider provider) {
-    final allFavorite = _selectedPhotos.every((p) => p.isFavorite);
+    final allFavorite = _selectedPhotos.isNotEmpty &&
+        _selectedPhotos.every((p) => p.isFavorite);
 
     return Material(
       elevation: 8,
@@ -100,6 +131,14 @@ class _PhotosViewState extends State<PhotosView> {
                 label: Text('${_selected.length}'),
                 onPressed: _clearSelection,
               ),
+              TextButton(
+                onPressed: () => _selectAll(provider),
+                child: Text(
+                  _selected.length == provider.visiblePhotos.length
+                      ? 'Deselect all'
+                      : 'Select all',
+                ),
+              ),
               const Spacer(),
               IconButton(
                 icon: Icon(
@@ -109,6 +148,11 @@ class _PhotosViewState extends State<PhotosView> {
                 onPressed: () async {
                   await provider.setFavorites(_selectedPhotos, !allFavorite);
                 },
+              ),
+              IconButton(
+                icon: const Icon(Icons.download),
+                tooltip: 'Download copies',
+                onPressed: () => _downloadSelected(context, provider),
               ),
               IconButton(
                 icon: const Icon(Icons.drive_file_move_outline),
@@ -129,6 +173,16 @@ class _PhotosViewState extends State<PhotosView> {
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _downloadSelected(
+      BuildContext context, GalleryProvider provider) async {
+    if (_selectedPhotos.isEmpty) return;
+    final count = await provider.exportPhotos(_selectedPhotos);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Downloaded $count file(s) to Downloads')),
     );
   }
 
@@ -251,20 +305,37 @@ class _PhotosViewState extends State<PhotosView> {
 
 class _Toolbar extends StatelessWidget {
   final GalleryProvider provider;
-  const _Toolbar({required this.provider});
+  final bool selectionMode;
+  final VoidCallback onToggleSelection;
+  const _Toolbar({
+    required this.provider,
+    required this.selectionMode,
+    required this.onToggleSelection,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final screenW = MediaQuery.of(context).size.width;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         children: [
-          Text(
-            '${provider.visiblePhotos.length} items',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
+          if (screenW > 500)
+            Text(
+              '${provider.visiblePhotos.length} items',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           const Spacer(),
-          _ZoomSlider(provider: provider),
+          ZoomSlider(provider: provider),
+          IconButton(
+            icon: Icon(
+              selectionMode ? Icons.check_box : Icons.check_box_outline_blank,
+              size: 20,
+            ),
+            visualDensity: VisualDensity.compact,
+            tooltip: selectionMode ? 'Exit selection' : 'Select',
+            onPressed: onToggleSelection,
+          ),
           const SizedBox(width: 4),
           _filterChip(
             context,
@@ -317,49 +388,6 @@ class _Toolbar extends StatelessWidget {
       label: Text(label),
       selected: selected,
       onSelected: onSelected,
-    );
-  }
-}
-
-class _ZoomSlider extends StatelessWidget {
-  final GalleryProvider provider;
-  const _ZoomSlider({required this.provider});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          icon: const Icon(Icons.zoom_out, size: 20),
-          visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          padding: EdgeInsets.zero,
-          onPressed: () => provider.setZoom(provider.zoomLevel - 1),
-        ),
-        const SizedBox(width: 2),
-        SizedBox(
-          width: 180,
-          child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(trackHeight: 3),
-            child: Slider(
-              value: provider.zoomLevel.toDouble(),
-              min: 0,
-              max: 3,
-              divisions: 3,
-              onChanged: (v) => provider.setZoom(v.round()),
-            ),
-          ),
-        ),
-        const SizedBox(width: 2),
-        IconButton(
-          icon: const Icon(Icons.zoom_in, size: 20),
-          visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          padding: EdgeInsets.zero,
-          onPressed: () => provider.setZoom(provider.zoomLevel + 1),
-        ),
-      ],
     );
   }
 }

@@ -28,11 +28,17 @@ mkdir -p "$APP_DIR/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "$APP_DIR/usr/share/applications"
 ICON_SRC="$PROJECT_DIR/packaging/logo.png"
 if [ -f "$ICON_SRC" ]; then
-  # Center-crop the logo to a square icon (256 and 512 px) using ImageMagick.
-  magick "$ICON_SRC" -resize '512x512^' -gravity center -extent 512x512 \
+  # Center-crop the logo to a square icon and round the corners (ImageMagick).
+  ICON_SQ="$PROJECT_DIR/packaging/AppDir/.icon_sq.png"
+  magick "$ICON_SRC" -resize '512x512^' -gravity center -extent 512x512 "$ICON_SQ" \
+    || convert "$ICON_SRC" -resize '512x512^' -gravity center -extent 512x512 "$ICON_SQ"
+  magick "$ICON_SQ" \( -size 512x512 xc:none -fill white -draw "roundrectangle 0,0 511,511 56,56" \) \
+    -alpha off -compose CopyOpacity -composite \
     "$APP_DIR/usr/share/icons/hicolor/256x256/apps/$APP_NAME.png" \
-    || convert "$ICON_SRC" -resize '512x512^' -gravity center -extent 512x512 \
-    "$APP_DIR/usr/share/icons/hicolor/256x256/apps/$APP_NAME.png"
+    || convert "$ICON_SQ" \( -size 512x512 xc:none -fill white -draw "roundrectangle 0,0 511,511 56,56" \) \
+      -alpha off -compose CopyOpacity -composite \
+      "$APP_DIR/usr/share/icons/hicolor/256x256/apps/$APP_NAME.png"
+  rm -f "$ICON_SQ"
   cp "$APP_DIR/usr/share/icons/hicolor/256x256/apps/$APP_NAME.png" "$APP_DIR/$APP_NAME.png"
 else
   echo "WARNING: packaging/logo.png not found, using generated placeholder icon."

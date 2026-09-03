@@ -33,6 +33,7 @@ class PhotoViewerScreen extends StatefulWidget {
 class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
   late final List<PhotoItem> _photos = List.of(widget.photos);
   late int _index = widget.initialIndex;
+  bool _uiVisible = true;
   late final PageController _controller =
       PageController(initialPage: widget.initialIndex);
 
@@ -42,6 +43,16 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  void _toggleUi() => setState(() => _uiVisible = !_uiVisible);
+
+  ImageProvider _imageProvider(PhotoItem photo, BuildContext context) {
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final screenW = MediaQuery.of(context).size.width;
+    final targetW = (screenW * dpr * 2).round().clamp(800, 2560);
+    return ResizeImage(FileImage(File(photo.path)),
+        width: targetW, allowUpscaling: false);
   }
 
   @override
@@ -54,44 +65,49 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: Text(
-          '${_index + 1} / ${_photos.length}',
-          style: const TextStyle(fontSize: 16),
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(
-              _current.isFavorite ? Icons.favorite : Icons.favorite_border,
-              color: _current.isFavorite ? Colors.redAccent : Colors.white,
-            ),
-            tooltip: 'Favorite',
-            onPressed: () => provider.toggleFavorite(_current),
-          ),
-          IconButton(
-            icon: const Icon(Icons.download),
-            tooltip: 'Download a copy',
-            onPressed: () => _download(context),
-          ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            tooltip: 'Share',
-            onPressed: () => _share(context),
-          ),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            onSelected: (v) => _onMenu(v),
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'details', child: Text('Details')),
-              PopupMenuItem(value: 'notes', child: Text('Tags & comment')),
-              PopupMenuItem(value: 'rename', child: Text('Rename')),
-              PopupMenuItem(value: 'delete', child: Text('Delete')),
-            ],
-          ),
-        ],
-      ),
+      appBar: _uiVisible
+          ? AppBar(
+              backgroundColor: Colors.black,
+              foregroundColor: Colors.white,
+              title: Text(
+                '${_index + 1} / ${_photos.length}',
+                style: const TextStyle(fontSize: 16),
+              ),
+              actions: [
+                IconButton(
+                  icon: Icon(
+                    _current.isFavorite
+                        ? Icons.favorite
+                        : Icons.favorite_border,
+                    color:
+                        _current.isFavorite ? Colors.redAccent : Colors.white,
+                  ),
+                  tooltip: 'Favorite',
+                  onPressed: () => provider.toggleFavorite(_current),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.download),
+                  tooltip: 'Download a copy',
+                  onPressed: () => _download(context),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.share),
+                  tooltip: 'Share',
+                  onPressed: () => _share(context),
+                ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (v) => _onMenu(v),
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'details', child: Text('Details')),
+                    PopupMenuItem(value: 'notes', child: Text('Tags & comment')),
+                    PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  ],
+                ),
+              ],
+            )
+          : null,
       body: Focus(
         autofocus: true,
         onKeyEvent: _onKeyEvent,
@@ -106,17 +122,21 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                 final photo = _photos[index];
                 if (photo.isVideo) {
                   return PhotoViewGalleryPageOptions.customChild(
-                    child: VideoPlayerView(file: File(photo.path)),
+                    child: VideoPlayerView(
+                      file: File(photo.path),
+                      onTap: _toggleUi,
+                    ),
                     minScale: PhotoViewComputedScale.contained,
                     maxScale: PhotoViewComputedScale.covered * 2,
                   );
                 }
                 return PhotoViewGalleryPageOptions(
-                  imageProvider: FileImage(File(photo.path)),
+                  imageProvider: _imageProvider(photo, context),
                   minScale: PhotoViewComputedScale.contained,
                   maxScale: PhotoViewComputedScale.covered * 3,
-                  heroAttributes:
-                      PhotoViewHeroAttributes(tag: 'photo_${photo.path}_$index'),
+                  heroAttributes: PhotoViewHeroAttributes(
+                      tag: 'photo_${photo.path}_$index'),
+                  onTapUp: (context, details, controllerValue) => _toggleUi(),
                   errorBuilder: (context, error, stack) => const Center(
                     child: Icon(Icons.broken_image_outlined,
                         color: Colors.white54, size: 64),
@@ -124,7 +144,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                 );
               },
             ),
-            if (_index > 0)
+            if (_uiVisible && _index > 0)
               Align(
                 alignment: Alignment.centerLeft,
                 child: _NavButton(
@@ -132,7 +152,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                   onPressed: () => _goTo(_index - 1),
                 ),
               ),
-            if (_index < _photos.length - 1)
+            if (_uiVisible && _index < _photos.length - 1)
               Align(
                 alignment: Alignment.centerRight,
                 child: _NavButton(

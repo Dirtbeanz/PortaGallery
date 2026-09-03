@@ -7,7 +7,13 @@ import 'screens/home_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
+  try {
+    MediaKit.ensureInitialized();
+  } catch (_) {
+    // Video playback will simply show an error if libmpv is missing.
+  }
+  PaintingBinding.instance.imageCache.maximumSize = 300;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 200 << 20;
   runApp(const PhotoGalleryApp());
 }
 

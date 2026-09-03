@@ -24,7 +24,7 @@ class SettingsScreen extends StatelessWidget {
             child: Column(
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(24),
                   child: Image.asset(
                     'assets/logo.png',
                     height: 120,

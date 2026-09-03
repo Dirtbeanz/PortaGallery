@@ -36,8 +36,9 @@ class FavoritesView extends StatelessWidget {
 
     return PhotoGrid(
       sections: sections,
-      columns: 4,
-      squareTiles: true,
+      columns: provider.columnsForZoom(MediaQuery.of(context).size.width),
+      squareTiles: provider.useSquareTiles,
+      viewerPhotos: favorites,
     );
   }
 }
