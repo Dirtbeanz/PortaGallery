@@ -32,10 +32,10 @@ if [ -f "$ICON_SRC" ]; then
   ICON_SQ="$PROJECT_DIR/packaging/AppDir/.icon_sq.png"
   magick "$ICON_SRC" -resize '512x512^' -gravity center -extent 512x512 "$ICON_SQ" \
     || convert "$ICON_SRC" -resize '512x512^' -gravity center -extent 512x512 "$ICON_SQ"
-  magick "$ICON_SQ" \( -size 512x512 xc:none -fill white -draw "roundrectangle 0,0 511,511 56,56" \) \
+  magick "$ICON_SQ" \( -size 512x512 xc:none -fill white -draw "roundrectangle 0,0 511,511 88,88" \) \
     -alpha off -compose CopyOpacity -composite \
     "$APP_DIR/usr/share/icons/hicolor/256x256/apps/$APP_NAME.png" \
-    || convert "$ICON_SQ" \( -size 512x512 xc:none -fill white -draw "roundrectangle 0,0 511,511 56,56" \) \
+    || convert "$ICON_SQ" \( -size 512x512 xc:none -fill white -draw "roundrectangle 0,0 511,511 88,88" \) \
       -alpha off -compose CopyOpacity -composite \
       "$APP_DIR/usr/share/icons/hicolor/256x256/apps/$APP_NAME.png"
   rm -f "$ICON_SQ"

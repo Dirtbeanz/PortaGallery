@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../services/external_player_service.dart';
+
 class VideoPlayerView extends StatefulWidget {
   final File file;
   final VoidCallback? onTap;
@@ -20,6 +22,7 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
   late final VideoController _controller = VideoController(_player);
   bool _ready = false;
   bool _error = false;
+  bool _renderFailed = false;
 
   @override
   void initState() {
@@ -32,8 +35,21 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
       await _player.open(Media(widget.file.path), play: true);
       if (!mounted) return;
       setState(() => _ready = true);
+      _watchFirstFrame();
     } catch (_) {
       if (mounted) setState(() => _error = true);
+    }
+  }
+
+  Future<void> _watchFirstFrame() async {
+    if (!Platform.isLinux) return;
+    try {
+      await _controller.waitUntilFirstFrameRendered
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      if (mounted && _player.state.playing) {
+        setState(() => _renderFailed = true);
+      }
     }
   }
 
@@ -47,7 +63,8 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
   Widget build(BuildContext context) {
     if (_error) {
       return const Center(
-        child: Icon(Icons.broken_image_outlined, color: Colors.white54, size: 64),
+        child:
+            Icon(Icons.broken_image_outlined, color: Colors.white54, size: 64),
       );
     }
     if (!_ready) {
@@ -56,27 +73,74 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
       );
     }
 
-    return Video(
-      controller: _controller,
-      controls: (state) => _PortaVideoControls(
-        player: _player,
-        onTap: widget.onTap,
-      ),
-      fill: Colors.black,
-      fit: BoxFit.contain,
-      // Avoid wakelock/background handling on desktop, where the plugins are
-      // not available and can crash.
-      wakelock: Platform.isAndroid,
-      pauseUponEnteringBackgroundMode: Platform.isAndroid,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Video(
+          controller: _controller,
+          controls: (state) => _PortaVideoControls(
+            player: _player,
+            onTap: widget.onTap,
+            externalEnabled: Platform.isLinux,
+            filePath: widget.file.path,
+          ),
+          fill: Colors.black,
+          fit: BoxFit.contain,
+          // Avoid wakelock/background handling on desktop, where the plugins
+          // are not available and can crash.
+          wakelock: Platform.isAndroid,
+          pauseUponEnteringBackgroundMode: Platform.isAndroid,
+        ),
+        if (_renderFailed)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.75),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.slow_motion_video,
+                        color: Colors.white70, size: 56),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'In-app video rendering is not available here.',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open with system player'),
+                      onPressed: () => _openExternal(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
     );
+  }
+
+  Future<void> _openExternal() async {
+    try {
+      await _player.pause();
+    } catch (_) {}
+    await ExternalPlayerService.launch(widget.file.path);
   }
 }
 
 class _PortaVideoControls extends StatefulWidget {
   final Player player;
   final VoidCallback? onTap;
+  final bool externalEnabled;
+  final String? filePath;
 
-  const _PortaVideoControls({required this.player, this.onTap});
+  const _PortaVideoControls({
+    required this.player,
+    this.onTap,
+    this.externalEnabled = false,
+    this.filePath,
+  });
 
   @override
   State<_PortaVideoControls> createState() => _PortaVideoControlsState();
@@ -250,6 +314,20 @@ class _PortaVideoControlsState extends State<_PortaVideoControls> {
                       );
                     },
                   ),
+                  if (widget.externalEnabled)
+                    IconButton(
+                      icon: const Icon(Icons.open_in_new, color: Colors.white),
+                      tooltip: 'Open with system player',
+                      onPressed: () async {
+                        final path = widget.filePath;
+                        if (path != null) {
+                          await ExternalPlayerService.launch(path);
+                        }
+                        try {
+                          await widget.player.pause();
+                        } catch (_) {}
+                      },
+                    ),
                 ],
               );
             },
