@@ -438,6 +438,9 @@ class _MetadataSheetState extends State<_MetadataSheet> {
     if (meta.dateTaken != null) {
       rows.add(_row(context, Icons.photo_camera, 'Date taken',
           _formatDate(meta.dateTaken!)));
+    } else if (widget.photo.dateTaken != null) {
+      rows.add(_row(context, Icons.photo_camera, 'Date taken',
+          _formatDate(widget.photo.dateTaken!)));
     }
     if (meta.cameraMake != null || meta.cameraModel != null) {
       final camera = [meta.cameraMake, meta.cameraModel]

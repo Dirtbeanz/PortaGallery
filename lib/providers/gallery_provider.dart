@@ -28,7 +28,15 @@ class GalleryProvider extends ChangeNotifier {
       _photos.where((p) => _favoritePaths.contains(p.path)).toList();
 
   Map<String, PhotoNotes> _notes = {};
-  PhotoNotes getNotes(String path) => _notes[path] ?? const PhotoNotes();
+  PhotoNotes getNotes(String path) {
+    final saved = _notes[path];
+    if (saved != null) return saved;
+    final photo = _photoByPath(path);
+    if (photo?.takeoutDescription != null) {
+      return PhotoNotes(comment: photo!.takeoutDescription!);
+    }
+    return const PhotoNotes();
+  }
 
   Map<String, String> _thumbPaths = {};
   String? thumbPathOrNull(PhotoItem photo) => _thumbPaths[photo.path];
@@ -237,7 +245,7 @@ class GalleryProvider extends ChangeNotifier {
     list.sort((a, b) {
       final compare = switch (sortMode.field) {
         SortField.name => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-        SortField.dateModified => a.modifiedAt.compareTo(b.modifiedAt),
+        SortField.dateModified => a.sortDate.compareTo(b.sortDate),
         SortField.size => a.sizeBytes.compareTo(b.sizeBytes),
       };
       return sortMode.order == SortOrder.ascending ? compare : -compare;
@@ -285,7 +293,7 @@ class GalleryProvider extends ChangeNotifier {
 
     final groups = <String, List<PhotoItem>>{};
     for (final photo in list) {
-      final key = dateKey(photo.modifiedAt);
+      final key = dateKey(photo.sortDate);
       groups.putIfAbsent(key, () => []).add(photo);
     }
 

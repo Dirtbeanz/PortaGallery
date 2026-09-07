@@ -43,6 +43,7 @@ class _PhotosViewState extends State<PhotosView> {
           provider: provider,
           selectionMode: _selectionMode,
           onToggleSelection: _toggleSelectionMode,
+          onRefresh: () => _refresh(context, provider),
         ),
         Expanded(
           child: PhotoGrid(
@@ -65,6 +66,15 @@ class _PhotosViewState extends State<PhotosView> {
       _selectionMode = !_selectionMode;
       if (!_selectionMode) _selected.clear();
     });
+  }
+
+  Future<void> _refresh(
+      BuildContext context, GalleryProvider provider) async {
+    await provider.rescan();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Library refreshed — ${provider.photos.length} items')),
+    );
   }
 
   void _selectAll(GalleryProvider provider) {
@@ -307,10 +317,12 @@ class _Toolbar extends StatelessWidget {
   final GalleryProvider provider;
   final bool selectionMode;
   final VoidCallback onToggleSelection;
+  final VoidCallback onRefresh;
   const _Toolbar({
     required this.provider,
     required this.selectionMode,
     required this.onToggleSelection,
+    required this.onRefresh,
   });
 
   @override
@@ -327,6 +339,12 @@ class _Toolbar extends StatelessWidget {
             ),
           const Spacer(),
           ZoomSlider(provider: provider),
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 20),
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Rescan for new files',
+            onPressed: onRefresh,
+          ),
           IconButton(
             icon: Icon(
               selectionMode ? Icons.check_box : Icons.check_box_outline_blank,

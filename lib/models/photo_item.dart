@@ -7,6 +7,8 @@ class PhotoItem {
   final bool isVideo;
   bool isFavorite;
   double aspectRatio;
+  DateTime? dateTaken;
+  String? takeoutDescription;
 
   PhotoItem({
     required this.path,
@@ -17,9 +19,13 @@ class PhotoItem {
     required this.isVideo,
     this.isFavorite = false,
     this.aspectRatio = 1.0,
+    this.dateTaken,
+    this.takeoutDescription,
   });
 
   String get id => path;
+
+  DateTime get sortDate => dateTaken ?? modifiedAt;
 
   String get extension => path.contains('.')
       ? path.substring(path.lastIndexOf('.'))

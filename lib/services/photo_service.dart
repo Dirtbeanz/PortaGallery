@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -55,6 +56,8 @@ class PhotoService {
               ? ''
               : p.relative(parent, from: rootAbs);
 
+          final sidecar = await _readTakeoutSidecar(entry.path);
+
           out.add(PhotoItem(
             path: entry.path,
             name: name,
@@ -62,12 +65,44 @@ class PhotoService {
             sizeBytes: stat.size,
             modifiedAt: stat.modified,
             isVideo: isVideoPath(entry.path),
+            dateTaken: sidecar.$1,
+            takeoutDescription: sidecar.$2,
           ));
         }
       } catch (_) {
         continue;
       }
     }
+  }
+
+  static Future<(DateTime?, String?)> _readTakeoutSidecar(
+      String mediaPath) async {
+    DateTime? dateTaken;
+    String? description;
+    try {
+      final sidecarFile = File('$mediaPath.json');
+      if (!await sidecarFile.exists()) return (null, null);
+      final raw = await sidecarFile.readAsString();
+      if (raw.length > 2 * 1024 * 1024) return (null, null);
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+
+      final taken = data['photoTakenTime'];
+      if (taken is Map && taken['timestamp'] != null) {
+        final stamp = int.tryParse(taken['timestamp'].toString());
+        if (stamp != null && stamp > 0) {
+          dateTaken =
+              DateTime.fromMillisecondsSinceEpoch(stamp * 1000, isUtc: true)
+                  .toLocal();
+        }
+      }
+
+      final desc = data['description'];
+      if (desc is String && desc.trim().isNotEmpty) {
+        description = desc.trim();
+      }
+    } catch (_) {}
+
+    return (dateTaken, description);
   }
 
   static Future<void> importFile(String sourcePath, String libraryPath,
