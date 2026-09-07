@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -89,18 +90,55 @@ class GalleryProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final scanned = await Isolate.run(() => PhotoService.scanDirectory(path));
+      final manifest = await _loadManifest();
+      final outManifest = <String, dynamic>{};
+
+      final scanned = await Isolate.run(() => PhotoService.scanDirectory(
+            path,
+            manifest: manifest,
+            outManifest: outManifest,
+          ));
+
       for (final photo in scanned) {
         photo.isFavorite = _favoritePaths.contains(photo.path);
       }
       _photos = scanned;
       _albums = _buildAlbums();
       isConfigured = true;
+      await _saveManifest(outManifest);
       await _loadExistingThumbnails();
     } finally {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<Map<String, dynamic>?> _loadManifest() async {
+    try {
+      final file = File(p.join(
+          (await getApplicationSupportDirectory()).path, 'scan_cache.json'));
+      if (!await file.exists()) return null;
+      final data = jsonDecode(await file.readAsString());
+      if (data is Map<String, dynamic>) {
+        final lib = data[libraryPath];
+        if (lib is Map<String, dynamic>) return lib;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _saveManifest(Map<String, dynamic> entries) async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final file = File(p.join(dir.path, 'scan_cache.json'));
+      Map<String, dynamic> root = {};
+      try {
+        final existing = jsonDecode(await file.readAsString());
+        if (existing is Map<String, dynamic>) root = existing;
+      } catch (_) {}
+      root[libraryPath ?? ''] = entries;
+      await file.writeAsString(jsonEncode(root));
+    } catch (_) {}
   }
 
   Future<void> _loadExistingThumbnails() async {
