@@ -25,7 +25,7 @@ class DatabaseService {
     _db = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 3,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE favorites (
@@ -40,6 +40,25 @@ class DatabaseService {
               comment TEXT NOT NULL DEFAULT ''
             )
           ''');
+          await db.execute('''
+            CREATE TABLE date_overrides (
+              path TEXT PRIMARY KEY,
+              date_taken INTEGER NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE virtual_albums (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE virtual_album_items (
+              album_id INTEGER NOT NULL,
+              path TEXT NOT NULL,
+              PRIMARY KEY (album_id, path)
+            )
+          ''');
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -48,6 +67,27 @@ class DatabaseService {
                 path TEXT PRIMARY KEY,
                 tags TEXT NOT NULL DEFAULT '',
                 comment TEXT NOT NULL DEFAULT ''
+              )
+            ''');
+          }
+          if (oldVersion < 3) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS date_overrides (
+                path TEXT PRIMARY KEY,
+                date_taken INTEGER NOT NULL
+              )
+            ''');
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS virtual_albums (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+              )
+            ''');
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS virtual_album_items (
+                album_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                PRIMARY KEY (album_id, path)
               )
             ''');
           }
@@ -108,5 +148,110 @@ class DatabaseService {
   Future<void> removeNotes(String path) async {
     final db = await database;
     await db.delete('notes', where: 'path = ?', whereArgs: [path]);
+  }
+
+  Future<void> setDateOverride(String path, DateTime date) async {
+    final db = await database;
+    await db.insert(
+      'date_overrides',
+      {'path': path, 'date_taken': date.millisecondsSinceEpoch},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> removeDateOverride(String path) async {
+    final db = await database;
+    await db.delete('date_overrides', where: 'path = ?', whereArgs: [path]);
+  }
+
+  Future<Map<String, DateTime>> getAllDateOverrides() async {
+    final db = await database;
+    final rows = await db.query('date_overrides');
+    final map = <String, DateTime>{};
+    for (final row in rows) {
+      map[row['path'] as String] =
+          DateTime.fromMillisecondsSinceEpoch(row['date_taken'] as int);
+    }
+    return map;
+  }
+
+  Future<int> createVirtualAlbum(String name) async {
+    final db = await database;
+    return db.insert('virtual_albums', {'name': name});
+  }
+
+  Future<void> renameVirtualAlbum(int id, String name) async {
+    final db = await database;
+    await db.update('virtual_albums', {'name': name},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> deleteVirtualAlbum(int id) async {
+    final db = await database;
+    await db.delete('virtual_album_items',
+        where: 'album_id = ?', whereArgs: [id]);
+    await db.delete('virtual_albums', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> addToVirtualAlbum(int albumId, List<String> paths) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final path in paths) {
+      batch.insert(
+        'virtual_album_items',
+        {'album_id': albumId, 'path': path},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<void> removeFromVirtualAlbum(int albumId, List<String> paths) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final path in paths) {
+      batch.delete('virtual_album_items',
+          where: 'album_id = ? AND path = ?', whereArgs: [albumId, path]);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<List<Map<String, dynamic>>> getVirtualAlbums() async {
+    final db = await database;
+    final rows = await db.query('virtual_albums');
+    final result = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      final count = Sqflite.firstIntValue(await db.rawQuery(
+            'SELECT COUNT(*) FROM virtual_album_items WHERE album_id = ?',
+            [row['id']],
+          )) ??
+          0;
+      result.add({
+        'id': row['id'] as int,
+        'name': row['name'] as String,
+        'count': count,
+      });
+    }
+    return result;
+  }
+
+  Future<Set<String>> getVirtualAlbumItems(int albumId) async {
+    final db = await database;
+    final rows = await db.query('virtual_album_items',
+        columns: ['path'], where: 'album_id = ?', whereArgs: [albumId]);
+    return rows.map((r) => r['path'] as String).toSet();
+  }
+
+  Future<void> removeMissingPaths(List<String> missingPaths) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final path in missingPaths) {
+      batch.delete('favorites', where: 'path = ?', whereArgs: [path]);
+      batch.delete('notes', where: 'path = ?', whereArgs: [path]);
+      batch.delete('date_overrides', where: 'path = ?', whereArgs: [path]);
+      batch.delete('virtual_album_items',
+          where: 'path = ?', whereArgs: [path]);
+    }
+    await batch.commit(noResult: true);
   }
 }

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:photo_gallery/models/photo_item.dart';
 import 'package:photo_gallery/services/photo_service.dart';
 
 void main() {
@@ -29,6 +30,7 @@ void main() {
     File('${media.path}.json').writeAsStringSync(jsonEncode(sidecar));
 
     final photos = await PhotoService.scanDirectory(root.path);
+    await _enrich(photos);
 
     expect(photos.length, 1);
     expect(photos.first.dateTaken, isNotNull);
@@ -51,6 +53,7 @@ void main() {
     File('${media.path}.json').writeAsStringSync(jsonEncode(sidecar));
 
     final photos = await PhotoService.scanDirectory(root.path);
+    await _enrich(photos);
 
     expect(photos.length, 1);
     expect(photos.first.dateTaken, isNull);
@@ -69,6 +72,7 @@ void main() {
     File('${media.path}.json').writeAsStringSync(jsonEncode(sidecar));
 
     final photos = await PhotoService.scanDirectory(root.path);
+    await _enrich(photos);
 
     expect(photos.length, 1);
     final utc = photos.first.dateTaken!.toUtc();
@@ -80,11 +84,25 @@ void main() {
     File(p.join(root.path, 'broken.jpg.json')).writeAsStringSync('{nope');
 
     final photos = await PhotoService.scanDirectory(root.path);
+    await _enrich(photos);
 
     expect(photos.length, 1);
     expect(photos.first.dateTaken, isNull);
     expect(photos.first.takeoutDescription, isNull);
   });
+}
+
+Future<void> _enrich(List<PhotoItem> photos) async {
+  final enriched = await PhotoService.enrichDates(photos);
+  for (final photo in photos) {
+    final result = enriched[photo.path];
+    if (result != null) {
+      photo.dateTaken = result[0] != null
+          ? DateTime.fromMillisecondsSinceEpoch(result[0] as int)
+          : null;
+      photo.takeoutDescription = result[1] as String?;
+    }
+  }
 }
 
 List<int> _buildExifDateJpeg(String dateTime) {

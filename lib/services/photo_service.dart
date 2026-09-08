@@ -7,12 +7,21 @@ import '../models/photo_item.dart';
 
 class PhotoService {
   static final Set<String> imageExtensions = {
-    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
+    '.jpg', '.jpeg', '.jpe', '.png', '.gif', '.bmp', '.webp',
     '.heic', '.heif', '.avif', '.tif', '.tiff', '.jfif',
+    '.jp2', '.j2k', '.jxl', '.svg', '.ico', '.cur',
+    '.psd', '.psb', '.mpo', '.insp',
+    // Camera RAW formats (embedded preview used for thumbnails).
+    '.raw', '.dng', '.cr2', '.cr3', '.crw', '.nef', '.nrw', '.arw',
+    '.srf', '.sr2', '.orf', '.rw2', '.pef', '.raf', '.3fr', '.fff',
+    '.mef', '.mos', '.mrw', '.x3f', '.erf', '.rwl', '.kdc', '.dcr',
+    '.ari', '.srw', '.iiq', '.r3d', '.ptx', '.cap', '.rwz',
   };
 
   static final Set<String> videoExtensions = {
-    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.3gp', '.wmv',
+    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.3gp', '.3gpp',
+    '.wmv', '.flv', '.f4v', '.mpg', '.mpeg', '.m2ts', '.mts', '.ts',
+    '.ogv', '.ogg', '.vob', '.asf', '.rm', '.rmvb',
   };
 
   static bool isSupported(String path) {
@@ -23,21 +32,74 @@ class PhotoService {
   static bool isVideoPath(String path) =>
       videoExtensions.contains(p.extension(path).toLowerCase());
 
+  static bool isRawPath(String path) {
+    const raw = {
+      '.raw', '.dng', '.cr2', '.cr3', '.crw', '.nef', '.nrw', '.arw',
+      '.srf', '.sr2', '.orf', '.rw2', '.pef', '.raf', '.3fr', '.fff',
+      '.mef', '.mos', '.mrw', '.x3f', '.erf', '.rwl', '.kdc', '.dcr',
+      '.ari', '.srw', '.iiq', '.r3d', '.ptx', '.cap', '.rwz',
+    };
+    return raw.contains(p.extension(path).toLowerCase());
+  }
+
   static Future<List<PhotoItem>> scanDirectory(String rootPath,
-      {Map<String, dynamic>? manifest, Map<String, dynamic>? outManifest}) async {
+      {Map<String, dynamic>? manifest,
+      Map<String, dynamic>? outManifest,
+      bool showHidden = false}) async {
     final photos = <PhotoItem>[];
-    await _scan(Directory(rootPath), photos, rootPath, manifest, outManifest);
-    photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
+    await _scan(Directory(rootPath), photos, rootPath, manifest, outManifest,
+        showHidden: showHidden);
+    photos.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
     return photos;
   }
 
+/// Enriches photos missing a capture date by reading EXIF headers and
+/// Takeout sidecars. Run after the fast pass so metadata extraction never
+/// blocks the initial listing. Returns a map of path -> (dateMillis, description).
+static Future<Map<String, List<Object?>>> enrichDates(
+      List<PhotoItem> photos) async {
+    final pending = photos.where((p) => p.dateTaken == null).toList();
+    final results = <String, List<Object?>>{};
+    const batchSize = 16;
+    for (var i = 0; i < pending.length; i += batchSize) {
+      final batch = pending.sublist(
+          i, i + batchSize > pending.length ? pending.length : i + batchSize);
+      await Future.wait(batch.map((photo) async {
+        var dateTaken = readExifDateTaken(photo.path);
+        if (dateTaken == null) {
+          final sidecar = await _readTakeoutSidecar(photo.path);
+          dateTaken = sidecar.$1;
+          results[photo.path] = [
+            dateTaken?.millisecondsSinceEpoch,
+            sidecar.$2,
+          ];
+        } else {
+          results[photo.path] = [dateTaken.millisecondsSinceEpoch, null];
+        }
+      }));
+    }
+    return results;
+  }
+
   static Future<void> _scan(Directory dir, List<PhotoItem> out, String rootPath,
-      Map<String, dynamic>? manifest, Map<String, dynamic>? outManifest) async {
+      Map<String, dynamic>? manifest, Map<String, dynamic>? outManifest,
+      {bool showHidden = false}) async {
     List<FileSystemEntity> entries;
     try {
       entries = await dir.list(followLinks: false).toList();
     } catch (_) {
       return;
+    }
+
+    // Respect .nomedia markers (e.g. WhatsApp media folders, caches) unless
+    // hidden folders are explicitly enabled.
+    if (!showHidden) {
+      for (final entry in entries) {
+        final name = p.basename(entry.path).toLowerCase();
+        if (name == '.nomedia' && entry is File) {
+          return;
+        }
+      }
     }
 
     final rootAbs = p.absolute(rootPath);
@@ -84,13 +146,6 @@ class PhotoService {
               ? DateTime.fromMillisecondsSinceEpoch(cachedDate)
               : null;
           description = cached['description'] as String?;
-        } else {
-          dateTaken = readExifDateTaken(file.path);
-          if (dateTaken == null) {
-            final sidecar = await _readTakeoutSidecar(file.path);
-            dateTaken = sidecar.$1;
-            description = sidecar.$2;
-          }
         }
 
         final parent = p.dirname(file.path);
@@ -121,7 +176,8 @@ class PhotoService {
     }
 
     for (final sub in subdirs) {
-      await _scan(sub, out, rootAbs, manifest, outManifest);
+      await _scan(sub, out, rootAbs, manifest, outManifest,
+          showHidden: showHidden);
     }
   }
 

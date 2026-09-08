@@ -28,10 +28,6 @@ class _PhotosViewState extends State<PhotosView> {
   Widget build(BuildContext context) {
     final provider = context.watch<GalleryProvider>();
 
-    if (provider.isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
     final sections = provider.dateSections;
     final columns = provider.columnsForZoom(
         MediaQuery.of(context).size.width);
@@ -39,6 +35,8 @@ class _PhotosViewState extends State<PhotosView> {
 
     return Column(
       children: [
+        if (provider.isLoading || provider.isEnriching)
+          const LinearProgressIndicator(minHeight: 2),
         _Toolbar(
           provider: provider,
           selectionMode: _selectionMode,
@@ -170,6 +168,16 @@ class _PhotosViewState extends State<PhotosView> {
                 onPressed: () => _moveToAlbum(context, provider),
               ),
               IconButton(
+                icon: const Icon(Icons.photo_library_outlined),
+                tooltip: 'Add to collection',
+                onPressed: () => _addToVirtualAlbum(context, provider),
+              ),
+              IconButton(
+                icon: const Icon(Icons.edit_calendar),
+                tooltip: 'Fix dates',
+                onPressed: () => _fixDates(context, provider),
+              ),
+              IconButton(
                 icon: const Icon(Icons.share),
                 tooltip: 'Share',
                 onPressed: () => _shareSelected(),
@@ -184,6 +192,195 @@ class _PhotosViewState extends State<PhotosView> {
         ),
       ),
     );
+  }
+
+  Future<void> _fixDates(
+      BuildContext context, GalleryProvider provider) async {
+    final photos = _selectedPhotos;
+    if (photos.isEmpty) return;
+
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(
+                title: Text('Fix dates'),
+                subtitle: Text('Adjust capture dates for the selection'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.event),
+                title: const Text('Set all to a specific date…'),
+                onTap: () => Navigator.of(context).pop('set'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.schedule),
+                title: const Text('Shift by a duration…'),
+                onTap: () => Navigator.of(context).pop('shift'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.undo),
+                title: const Text('Reset to file dates'),
+                onTap: () => Navigator.of(context).pop('clear'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (choice == null || !context.mounted) return;
+
+    switch (choice) {
+      case 'set':
+        final date = await showDatePicker(
+          context: context,
+          initialDate: DateTime.now(),
+          firstDate: DateTime(1970),
+          lastDate: DateTime(2100),
+        );
+        if (date == null) return;
+        if (!context.mounted) return;
+        final time = await showTimePicker(
+          context: context,
+          initialTime: TimeOfDay.now(),
+        );
+        if (!context.mounted) return;
+        final target =
+            DateTime(date.year, date.month, date.day, time?.hour ?? 12,
+                time?.minute ?? 0);
+        await provider.setDateOverrides(photos, target);
+        break;
+      case 'shift':
+        final days = await _promptInt(context, 'Shift by days (can be negative)');
+        if (days == null || !context.mounted) return;
+        final hours = await _promptInt(context, 'Shift by hours (optional)') ?? 0;
+        if (!context.mounted) return;
+        await provider.shiftDateOverrides(
+            photos, Duration(days: days, hours: hours));
+        break;
+      case 'clear':
+        await provider.clearDateOverrides(photos);
+        await provider.rescan();
+        break;
+    }
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Dates updated')),
+      );
+    }
+  }
+
+  Future<int?> _promptInt(BuildContext context, String label) async {
+    final controller = TextEditingController();
+    final value = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(label),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.numberWithOptions(signed: true),
+            decoration: const InputDecoration(hintText: '0'),
+            onSubmitted: (v) =>
+                Navigator.of(context).pop(int.tryParse(v.trim()) ?? 0),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(int.tryParse(controller.text.trim()) ?? 0),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+    return value;
+  }
+
+  Future<void> _addToVirtualAlbum(
+      BuildContext context, GalleryProvider provider) async {
+    final photos = _selectedPhotos;
+    if (photos.isEmpty) return;
+    final albums = provider.virtualAlbums;
+
+    final choice = await showModalBottomSheet<Object>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(
+                title: Text('Add to collection'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.create_new_folder),
+                title: const Text('New collection…'),
+                onTap: () => Navigator.of(context).pop('__new__'),
+              ),
+              for (final album in albums)
+                ListTile(
+                  leading: const Icon(Icons.photo_library),
+                  title: Text('${album['name']} (${album['count']})'),
+                  onTap: () => Navigator.of(context).pop(album['id']),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (choice == null || !context.mounted) return;
+
+    if (choice == '__new__') {
+      final controller = TextEditingController();
+      final name = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('New collection'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: 'Collection name'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(controller.text),
+                child: const Text('Create'),
+              ),
+            ],
+          );
+        },
+      );
+      if (name == null || name.trim().isEmpty) return;
+      final id = await provider.createVirtualAlbum(name);
+      if (id < 0) return;
+      await provider.addToVirtualAlbum(id, photos);
+    } else {
+      await provider.addToVirtualAlbum(choice as int, photos);
+    }
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Added to collection')),
+      );
+    }
   }
 
   Future<void> _downloadSelected(

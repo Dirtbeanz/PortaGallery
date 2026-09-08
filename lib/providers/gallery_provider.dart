@@ -48,6 +48,7 @@ class GalleryProvider extends ChangeNotifier {
   String? libraryPath;
   bool isConfigured = false;
   bool isLoading = false;
+  bool isEnriching = false;
   bool showFavoritesOnly = false;
   String searchQuery = '';
   int _zoomLevel = 2;
@@ -55,30 +56,69 @@ class GalleryProvider extends ChangeNotifier {
   final Map<String, double> _aspectRatios = {};
   Map<String, double> get aspectRatios => _aspectRatios;
 
+  bool get showHiddenFolders => _config.showHiddenFolders;
+  bool get isDriveMissing =>
+      isConfigured &&
+      libraryPath != null &&
+      libraryPath!.isNotEmpty &&
+      !Directory(libraryPath!).existsSync();
+
+  final Map<String, DateTime> _dateOverrides = {};
+  Timer? _driveWatcher;
+  bool _lastDrivePresent = true;
+
   SortMode sortMode = SortMode();
 
   Future<void> initialize() async {
     await _config.load();
     libraryPath = _config.libraryPath;
-    isConfigured = _config.isConfigured;
+    // Consider the app "configured" as long as a library path is set; the
+    // drive-missing banner handles the disconnected state.
+    isConfigured = _config.hasLibrary;
     _favoritePaths = await _database.getFavoritePaths();
     _notes = await _database.getAllNotes();
+    _virtualAlbums = await _database.getVirtualAlbums();
+    _dateOverrides.addAll(await _database.getAllDateOverrides());
     if (isConfigured) {
       await rescan();
     }
+    _startDriveWatcher();
     notifyListeners();
+  }
+
+  void _startDriveWatcher() {
+    _driveWatcher?.cancel();
+    _driveWatcher = Timer.periodic(const Duration(seconds: 4), (_) async {
+      final path = libraryPath;
+      if (path == null || path.isEmpty) return;
+      final present = Directory(path).existsSync();
+      if (present != _lastDrivePresent) {
+        _lastDrivePresent = present;
+        if (present) {
+          await rescan();
+        } else {
+          notifyListeners();
+        }
+      }
+    });
   }
 
   Future<void> setLibraryPath(String path) async {
     await _config.saveLibraryPath(path);
     libraryPath = path;
-    isConfigured = _config.isConfigured;
+    isConfigured = _config.hasLibrary;
+    await rescan();
+  }
+
+  Future<void> setShowHiddenFolders(bool value) async {
+    await _config.saveShowHiddenFolders(value);
+    notifyListeners();
     await rescan();
   }
 
   Future<void> rescan() async {
     final path = libraryPath;
-    if (path == null || path.isEmpty || !Directory(path).existsSync()) {
+    if (path == null || path.isEmpty) {
       _photos = [];
       _albums = [];
       isConfigured = false;
@@ -86,31 +126,124 @@ class GalleryProvider extends ChangeNotifier {
       return;
     }
 
+    // Drive not mounted: keep previous listing so the UI stays usable and
+    // show a "waiting for drive" state instead of wiping the library.
+    if (!Directory(path).existsSync()) {
+      _lastDrivePresent = false;
+      isConfigured = _config.hasLibrary;
+      isLoading = false;
+      notifyListeners();
+      return;
+    }
+    _lastDrivePresent = true;
+
     isLoading = true;
     notifyListeners();
 
     try {
       final manifest = await _loadManifest();
       final outManifest = <String, dynamic>{};
+      final showHidden = _config.showHiddenFolders;
 
+      // Phase 1: fast listing (stats only, cached metadata).
       final scanned = await Isolate.run(() => PhotoService.scanDirectory(
             path,
             manifest: manifest,
             outManifest: outManifest,
+            showHidden: showHidden,
           ));
 
       for (final photo in scanned) {
         photo.isFavorite = _favoritePaths.contains(photo.path);
+        final override = _dateOverrides[photo.path];
+        if (override != null) photo.dateTaken = override;
       }
       _photos = scanned;
       _albums = _buildAlbums();
       isConfigured = true;
+      isLoading = false;
+      notifyListeners();
+
+      // Phase 2: background metadata enrichment for files missing dates.
+      isEnriching = true;
+      try {
+        final pending = List<PhotoItem>.from(_photos);
+        final enriched = await Isolate.run(
+            () => PhotoService.enrichDates(pending));
+        for (final photo in _photos) {
+          final result = enriched[photo.path];
+          if (result != null) {
+            final dateMs = result[0] as int?;
+            final description = result[1] as String?;
+            if (dateMs != null) {
+              photo.dateTaken = DateTime.fromMillisecondsSinceEpoch(dateMs);
+            }
+            if (description != null) {
+              photo.takeoutDescription = description;
+            }
+            // Update manifest entries so future rescans skip this work.
+            outManifest[photo.path] = {
+              'size': photo.sizeBytes,
+              'mtime': photo.modifiedAt.millisecondsSinceEpoch,
+              'dateTaken': photo.dateTaken?.millisecondsSinceEpoch,
+              'description': photo.takeoutDescription,
+            };
+          }
+          final override = _dateOverrides[photo.path];
+          if (override != null) photo.dateTaken = override;
+        }
+        _photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
+      } finally {
+        isEnriching = false;
+      }
+
       await _saveManifest(outManifest);
       await _loadExistingThumbnails();
     } finally {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> setDateOverride(PhotoItem photo, DateTime date) async {
+    photo.dateTaken = date;
+    _dateOverrides[photo.path] = date;
+    await _database.setDateOverride(photo.path, date);
+    _photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
+    notifyListeners();
+  }
+
+  Future<void> setDateOverrides(List<PhotoItem> photos, DateTime date) async {
+    for (final photo in photos) {
+      photo.dateTaken = date;
+      _dateOverrides[photo.path] = date;
+      await _database.setDateOverride(photo.path, date);
+    }
+    _photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
+    notifyListeners();
+  }
+
+  Future<void> shiftDateOverrides(List<PhotoItem> photos,
+      Duration delta) async {
+    for (final photo in photos) {
+      final base = photo.sortDate;
+      final shifted = base.add(delta);
+      photo.dateTaken = shifted;
+      _dateOverrides[photo.path] = shifted;
+      await _database.setDateOverride(photo.path, shifted);
+    }
+    _photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
+    notifyListeners();
+  }
+
+  Future<void> clearDateOverrides(List<PhotoItem> photos) async {
+    for (final photo in photos) {
+      _dateOverrides.remove(photo.path);
+      await _database.removeDateOverride(photo.path);
+    }
+    // Re-read dates from disk metadata (manifest/EXIF/sidecar) since the
+    // override is gone.
+    await rescan();
   }
 
   Future<Map<String, dynamic>?> _loadManifest() async {
@@ -498,6 +631,11 @@ class GalleryProvider extends ChangeNotifier {
         await _database.removeNotes(photo.path);
         _notes.remove(photo.path);
       }
+      if (_dateOverrides.containsKey(photo.path)) {
+        await _database.removeDateOverride(photo.path);
+        _dateOverrides.remove(photo.path);
+      }
+      await _database.removeMissingPaths([photo.path]);
       _photos.removeWhere((p) => p.path == photo.path);
       _albums = _buildAlbums();
       notifyListeners();
@@ -518,11 +656,17 @@ class GalleryProvider extends ChangeNotifier {
           await _database.removeNotes(photo.path);
           _notes.remove(photo.path);
         }
+        if (_dateOverrides.containsKey(photo.path)) {
+          await _database.removeDateOverride(photo.path);
+          _dateOverrides.remove(photo.path);
+        }
+        await _database.removeMissingPaths([photo.path]);
         _photos.removeWhere((p) => p.path == photo.path);
       } catch (_) {}
     }
     _favoritePaths = await _database.getFavoritePaths();
     _albums = _buildAlbums();
+    await loadVirtualAlbums();
     notifyListeners();
   }
 
@@ -560,6 +704,48 @@ class GalleryProvider extends ChangeNotifier {
     } catch (_) {
       return false;
     }
+  }
+
+  List<Map<String, dynamic>> _virtualAlbums = [];
+
+  List<Map<String, dynamic>> get virtualAlbums => _virtualAlbums;
+
+  Future<void> loadVirtualAlbums() async {
+    _virtualAlbums = await _database.getVirtualAlbums();
+    notifyListeners();
+  }
+
+  Future<int> createVirtualAlbum(String name) async {
+    if (name.trim().isEmpty) return -1;
+    final id = await _database.createVirtualAlbum(name.trim());
+    await loadVirtualAlbums();
+    return id;
+  }
+
+  Future<void> renameVirtualAlbum(int id, String name) async {
+    await _database.renameVirtualAlbum(id, name.trim());
+    await loadVirtualAlbums();
+  }
+
+  Future<void> deleteVirtualAlbum(int id) async {
+    await _database.deleteVirtualAlbum(id);
+    await loadVirtualAlbums();
+  }
+
+  Future<void> addToVirtualAlbum(int albumId, List<PhotoItem> photos) async {
+    await _database.addToVirtualAlbum(
+        albumId, photos.map((p) => p.path).toList());
+    await loadVirtualAlbums();
+  }
+
+  Future<void> removeFromVirtualAlbum(int albumId, List<PhotoItem> photos) async {
+    await _database.removeFromVirtualAlbum(
+        albumId, photos.map((p) => p.path).toList());
+    await loadVirtualAlbums();
+  }
+
+  Future<Set<String>> getVirtualAlbumItems(int albumId) async {
+    return _database.getVirtualAlbumItems(albumId);
   }
 
   Future<int> movePhotosToAlbum(List<PhotoItem> photos, String albumPath) async {

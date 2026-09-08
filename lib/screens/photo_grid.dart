@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../models/photo_item.dart';
 import '../providers/gallery_provider.dart';
+import '../services/permission_service.dart';
 import 'photo_viewer_screen.dart';
 
 class PhotoGrid extends StatefulWidget {
@@ -132,14 +133,38 @@ class _PhotoGridState extends State<PhotoGrid> {
   @override
   Widget build(BuildContext context) {
     if (widget.sections.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.photo_outlined, size: 72, color: Colors.grey),
-            SizedBox(height: 12),
-            Text('No photos here yet'),
-          ],
+      final provider = context.read<GalleryProvider>();
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.photo_outlined, size: 72, color: Colors.grey),
+              const SizedBox(height: 12),
+              const Text('No photos here yet'),
+              if (Platform.isAndroid && provider.photos.isEmpty) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'If your drive is connected, this app may lack storage'
+                  ' permission.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.lock_open),
+                  label: const Text('Grant access'),
+                  onPressed: () async {
+                    await PermissionService.requestStorage();
+                    if (context.mounted) {
+                      await context.read<GalleryProvider>().rescan();
+                    }
+                  },
+                ),
+              ],
+            ],
+          ),
         ),
       );
     }

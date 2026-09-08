@@ -9,6 +9,7 @@ import '../services/permission_service.dart';
 import '../widgets/manual_path_dialog.dart';
 import 'albums_view.dart';
 import 'favorites_view.dart';
+import 'map_screen.dart';
 import 'photos_view.dart';
 import 'settings_screen.dart';
 
@@ -83,6 +84,11 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => _createAlbum(context, provider),
             ),
           IconButton(
+            icon: const Icon(Icons.map_outlined),
+            tooltip: 'Map view',
+            onPressed: () => _openMap(context),
+          ),
+          IconButton(
             icon: const Icon(Icons.upload_file),
             tooltip: 'Import photos',
             onPressed: () => _importPhotos(context, provider),
@@ -94,7 +100,40 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: views[_index],
+      body: Column(
+        children: [
+          if (provider.isDriveMissing)
+            Material(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: InkWell(
+                onTap: () => provider.rescan(),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.usb_off,
+                          color: Theme.of(context).colorScheme.onErrorContainer),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Storage drive not connected. '
+                          'Waiting for "${provider.libraryPath}" — '
+                          'tap to retry.',
+                          style: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onErrorContainer),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          Expanded(child: views[_index]),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
@@ -200,6 +239,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openSettings(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
+  }
+
+  void _openMap(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const MapScreen()),
     );
   }
 }

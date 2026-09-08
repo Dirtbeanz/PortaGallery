@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/gallery_provider.dart';
@@ -81,6 +83,25 @@ class SettingsScreen extends StatelessWidget {
             ],
           )),
           const SizedBox(height: 16),
+          _section(context, 'Library options',
+              child: Column(
+            children: [
+              SwitchListTile(
+                secondary: const Icon(Icons.visibility_off_outlined),
+                title: const Text('Show hidden folders'),
+                subtitle: const Text('Include folders marked with .nomedia'),
+                value: provider.showHiddenFolders,
+                onChanged: (v) => provider.setShowHiddenFolders(v),
+              ),
+              ListTile(
+                leading: const Icon(Icons.assignment_outlined),
+                title: const Text('Backup report'),
+                subtitle: const Text('Export a CSV report of the library'),
+                onTap: () => _backupReport(context, provider),
+              ),
+            ],
+          )),
+          const SizedBox(height: 16),
           _section(context, 'Actions',
               child: Column(
             children: [
@@ -100,6 +121,86 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _backupReport(
+      BuildContext context, GalleryProvider provider) async {
+    final photos = provider.photos;
+    final videos = photos.where((p) => p.isVideo).length;
+    final images = photos.length - videos;
+    final noDate = photos.where((p) => p.dateTaken == null).length;
+    final totalBytes = photos.fold<int>(0, (sum, p) => sum + p.sizeBytes);
+    final albums = <String, int>{};
+    for (final photo in photos) {
+      albums[photo.album.isEmpty ? 'Photos' : photo.album] =
+          (albums[photo.album.isEmpty ? 'Photos' : photo.album] ?? 0) + 1;
+    }
+
+    final buffer = StringBuffer()
+      ..writeln('path,name,album,type,size_bytes,date_taken')
+      ..writeAll(
+        photos.map((p) =>
+            '${_csv(p.path)},${_csv(p.name)},${_csv(p.album.isEmpty ? 'Photos' : p.album)},'
+            '${p.isVideo ? 'video' : 'photo'},${p.sizeBytes},'
+            '${p.dateTaken?.toIso8601String() ?? ''}'),
+        '\n',
+      );
+
+    final downloads = await getDownloadsDirectory();
+    final reportPath =
+        p.join(downloads?.path ?? '/tmp', 'portagallery_report.csv');
+    await File(reportPath).writeAsString(buffer.toString());
+
+    if (!context.mounted) return;
+    final albumList = albums.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final albumText = albumList
+        .take(12)
+        .map((e) => '${e.key}: ${e.value}')
+        .join('\n');
+
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Backup report'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Total items: ${photos.length}'),
+                Text('Photos: $images  •  Videos: $videos'),
+                Text('Missing capture date: $noDate'),
+                Text('Total size: ${_bytes(totalBytes)}'),
+                const Divider(),
+                const Text('Albums:',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                Text(albumText),
+                const Divider(),
+                Text('CSV saved to:\n$reportPath'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _csv(String value) => '"${value.replaceAll('"', '""')}"';
+
+  String _bytes(int bytes) {
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
   Widget _section(BuildContext context, String title, {required Widget child}) {

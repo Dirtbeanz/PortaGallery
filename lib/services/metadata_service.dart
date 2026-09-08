@@ -5,6 +5,18 @@ import 'package:exif/exif.dart';
 import '../models/photo_metadata.dart';
 
 class MetadataService {
+  /// Lightweight GPS-only read (skips full metadata extraction for map view).
+  static Future<(double, double)?> readGps(String path) async {
+    try {
+      final meta = await _readExif(path);
+      if (meta.gpsLatitude == null || meta.gpsLongitude == null) return null;
+      if (meta.gpsLatitude == 0.0 && meta.gpsLongitude == 0.0) return null;
+      return (meta.gpsLatitude!, meta.gpsLongitude!);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<PhotoMetadata> readMetadata(String path) async {
     PhotoMetadata meta = const PhotoMetadata();
     final exifMeta = await _readExif(path);

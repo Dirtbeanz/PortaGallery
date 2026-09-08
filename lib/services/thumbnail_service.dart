@@ -58,36 +58,76 @@ class ThumbnailService {
   }
 
   static Future<bool> _imageThumb(PhotoItem photo, String target) async {
-    final bytes = await File(photo.path).readAsBytes();
-    final codec = await ui.instantiateImageCodec(
-      bytes,
-      targetWidth: 640,
-      targetHeight: 640,
-      allowUpscaling: false,
-    );
     try {
-      final frame = await codec.getNextFrame();
-      final data = await frame.image.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
+      final bytes = await File(photo.path).readAsBytes();
+      final codec = await ui.instantiateImageCodec(
+        bytes,
+        targetWidth: 640,
+        targetHeight: 640,
+        allowUpscaling: false,
       );
-      frame.image.dispose();
-      if (data == null) return false;
-
-      final encoded = await Isolate.run(() {
-        final img.Image decoded = img.Image.fromBytes(
-          width: frame.image.width,
-          height: frame.image.height,
-          bytes: data.buffer,
-          order: img.ChannelOrder.rgba,
+      try {
+        final frame = await codec.getNextFrame();
+        final width = frame.image.width;
+        final height = frame.image.height;
+        final data = await frame.image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
         );
-        return Uint8List.fromList(
-            img.encodeJpg(decoded, quality: 82));
-      });
+        frame.image.dispose();
+        if (data == null) return false;
+        final buffer = data.buffer;
 
-      await File(target).writeAsBytes(encoded, flush: true);
-      return true;
-    } finally {
-      codec.dispose();
+        final encoded = await Isolate.run(() {
+          final img.Image decoded = img.Image.fromBytes(
+            width: width,
+            height: height,
+            bytes: buffer,
+            order: img.ChannelOrder.rgba,
+          );
+          return Uint8List.fromList(
+              img.encodeJpg(decoded, quality: 82));
+        });
+
+        await File(target).writeAsBytes(encoded, flush: true);
+        return true;
+      } finally {
+        codec.dispose();
+      }
+    } catch (_) {
+      // Flutter's codec can't decode RAW formats; fall back to ImageMagick
+      // (dcraw) on Linux.
+      return _magickThumb(photo.path, target);
+    }
+  }
+
+  static Future<bool> _magickThumb(String source, String target) async {
+    if (kIsWeb) return false;
+    try {
+      final result = await Process.run('magick', [
+        '$source[0]',
+        '-auto-orient',
+        '-thumbnail',
+        '640x640>',
+        '-quality',
+        '82',
+        target,
+      ]);
+      if (result.exitCode == 0 && await File(target).exists()) {
+        return true;
+      }
+      // Fall back to `convert` if `magick` (IM7) isn't installed.
+      final result2 = await Process.run('convert', [
+        '$source[0]',
+        '-auto-orient',
+        '-thumbnail',
+        '640x640>',
+        '-quality',
+        '82',
+        target,
+      ]);
+      return result2.exitCode == 0 && await File(target).exists();
+    } catch (_) {
+      return false;
     }
   }
 
