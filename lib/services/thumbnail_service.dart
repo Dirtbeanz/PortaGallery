@@ -3,12 +3,14 @@ import 'dart:isolate';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 import '../models/photo_item.dart';
+import 'photo_service.dart';
 
 class ThumbnailService {
   static Directory? _dir;
@@ -94,38 +96,55 @@ class ThumbnailService {
         codec.dispose();
       }
     } catch (_) {
-      // Flutter's codec can't decode RAW formats; fall back to ImageMagick
-      // (dcraw) on Linux.
+      // Flutter's codec can't decode RAW/HEIC formats; fall back to platform
+      // codecs (Android) or ImageMagick/heif-convert (Linux).
+      if (PhotoService.isRawPath(photo.path)) {
+        return _magickThumb(photo.path, target);
+      }
+      if (!kIsWeb && Platform.isAndroid) {
+        final ok = await _compressPlatform(photo.path, target);
+        if (ok) return true;
+      }
       return _magickThumb(photo.path, target);
     }
+  }
+
+  static Future<bool> _compressPlatform(String source, String target) async {
+    try {
+      final result = await FlutterImageCompress.compressAndGetFile(
+        source,
+        target,
+        format: CompressFormat.jpeg,
+        quality: 82,
+        minWidth: 640,
+        minHeight: 640,
+      );
+      if (result != null && await File(result.path).exists()) return true;
+    } catch (_) {}
+    return false;
   }
 
   static Future<bool> _magickThumb(String source, String target) async {
     if (kIsWeb) return false;
     try {
-      final result = await Process.run('magick', [
-        '$source[0]',
-        '-auto-orient',
-        '-thumbnail',
-        '640x640>',
-        '-quality',
-        '82',
-        target,
-      ]);
-      if (result.exitCode == 0 && await File(target).exists()) {
-        return true;
+      for (final exe in ['magick', 'convert', 'heif-convert']) {
+        final args = exe == 'heif-convert'
+            ? [source, target]
+            : [
+                '$source[0]',
+                '-auto-orient',
+                '-thumbnail',
+                '640x640>',
+                '-quality',
+                '82',
+                target,
+              ];
+        final result = await Process.run(exe, args);
+        if (result.exitCode == 0 && await File(target).exists()) {
+          return true;
+        }
       }
-      // Fall back to `convert` if `magick` (IM7) isn't installed.
-      final result2 = await Process.run('convert', [
-        '$source[0]',
-        '-auto-orient',
-        '-thumbnail',
-        '640x640>',
-        '-quality',
-        '82',
-        target,
-      ]);
-      return result2.exitCode == 0 && await File(target).exists();
+      return false;
     } catch (_) {
       return false;
     }

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -29,26 +28,18 @@ class GalleryProvider extends ChangeNotifier {
       _photos.where((p) => _favoritePaths.contains(p.path)).toList();
 
   Map<String, PhotoNotes> _notes = {};
-  PhotoNotes getNotes(String path) {
-    final saved = _notes[path];
-    if (saved != null) return saved;
-    final photo = _photoByPath(path);
-    if (photo?.takeoutDescription != null) {
-      return PhotoNotes(comment: photo!.takeoutDescription!);
-    }
-    return const PhotoNotes();
-  }
+  PhotoNotes getNotes(String path) => _notes[path] ?? const PhotoNotes();
 
   Map<String, String> _thumbPaths = {};
   String? thumbPathOrNull(PhotoItem photo) => _thumbPaths[photo.path];
   final Set<String> _thumbPending = {};
   final Set<String> _thumbInFlight = {};
   bool _thumbing = false;
+  Map<String, PhotoItem> _photoIndex = {};
 
   String? libraryPath;
   bool isConfigured = false;
   bool isLoading = false;
-  bool isEnriching = false;
   bool showFavoritesOnly = false;
   String searchQuery = '';
   int _zoomLevel = 2;
@@ -63,7 +54,6 @@ class GalleryProvider extends ChangeNotifier {
       libraryPath!.isNotEmpty &&
       !Directory(libraryPath!).existsSync();
 
-  final Map<String, DateTime> _dateOverrides = {};
   Timer? _driveWatcher;
   bool _lastDrivePresent = true;
 
@@ -78,7 +68,6 @@ class GalleryProvider extends ChangeNotifier {
     _favoritePaths = await _database.getFavoritePaths();
     _notes = await _database.getAllNotes();
     _virtualAlbums = await _database.getVirtualAlbums();
-    _dateOverrides.addAll(await _database.getAllDateOverrides());
     if (isConfigured) {
       await rescan();
     }
@@ -141,137 +130,24 @@ class GalleryProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final manifest = await _loadManifest();
-      final outManifest = <String, dynamic>{};
       final showHidden = _config.showHiddenFolders;
 
-      // Phase 1: fast listing (stats only, cached metadata).
-      final scanned = await Isolate.run(() => PhotoService.scanDirectory(
-            path,
-            manifest: manifest,
-            outManifest: outManifest,
-            showHidden: showHidden,
-          ));
+      final scanned = await Isolate.run(
+          () => PhotoService.scanDirectory(path, showHidden: showHidden));
 
       for (final photo in scanned) {
         photo.isFavorite = _favoritePaths.contains(photo.path);
-        final override = _dateOverrides[photo.path];
-        if (override != null) photo.dateTaken = override;
       }
       _photos = scanned;
+      _photoIndex = {for (final photo in scanned) photo.path: photo};
       _albums = _buildAlbums();
+      _sectionsDirty = true;
       isConfigured = true;
-      isLoading = false;
-      notifyListeners();
-
-      // Phase 2: background metadata enrichment for files missing dates.
-      isEnriching = true;
-      try {
-        final pending = List<PhotoItem>.from(_photos);
-        final enriched = await Isolate.run(
-            () => PhotoService.enrichDates(pending));
-        for (final photo in _photos) {
-          final result = enriched[photo.path];
-          if (result != null) {
-            final dateMs = result[0] as int?;
-            final description = result[1] as String?;
-            if (dateMs != null) {
-              photo.dateTaken = DateTime.fromMillisecondsSinceEpoch(dateMs);
-            }
-            if (description != null) {
-              photo.takeoutDescription = description;
-            }
-            // Update manifest entries so future rescans skip this work.
-            outManifest[photo.path] = {
-              'size': photo.sizeBytes,
-              'mtime': photo.modifiedAt.millisecondsSinceEpoch,
-              'dateTaken': photo.dateTaken?.millisecondsSinceEpoch,
-              'description': photo.takeoutDescription,
-            };
-          }
-          final override = _dateOverrides[photo.path];
-          if (override != null) photo.dateTaken = override;
-        }
-        _photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
-      } finally {
-        isEnriching = false;
-      }
-
-      await _saveManifest(outManifest);
       await _loadExistingThumbnails();
     } finally {
       isLoading = false;
       notifyListeners();
     }
-  }
-
-  Future<void> setDateOverride(PhotoItem photo, DateTime date) async {
-    photo.dateTaken = date;
-    _dateOverrides[photo.path] = date;
-    await _database.setDateOverride(photo.path, date);
-    _photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
-    notifyListeners();
-  }
-
-  Future<void> setDateOverrides(List<PhotoItem> photos, DateTime date) async {
-    for (final photo in photos) {
-      photo.dateTaken = date;
-      _dateOverrides[photo.path] = date;
-      await _database.setDateOverride(photo.path, date);
-    }
-    _photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
-    notifyListeners();
-  }
-
-  Future<void> shiftDateOverrides(List<PhotoItem> photos,
-      Duration delta) async {
-    for (final photo in photos) {
-      final base = photo.sortDate;
-      final shifted = base.add(delta);
-      photo.dateTaken = shifted;
-      _dateOverrides[photo.path] = shifted;
-      await _database.setDateOverride(photo.path, shifted);
-    }
-    _photos.sort((a, b) => b.sortDate.compareTo(a.sortDate));
-    notifyListeners();
-  }
-
-  Future<void> clearDateOverrides(List<PhotoItem> photos) async {
-    for (final photo in photos) {
-      _dateOverrides.remove(photo.path);
-      await _database.removeDateOverride(photo.path);
-    }
-    // Re-read dates from disk metadata (manifest/EXIF/sidecar) since the
-    // override is gone.
-    await rescan();
-  }
-
-  Future<Map<String, dynamic>?> _loadManifest() async {
-    try {
-      final file = File(p.join(
-          (await getApplicationSupportDirectory()).path, 'scan_cache.json'));
-      if (!await file.exists()) return null;
-      final data = jsonDecode(await file.readAsString());
-      if (data is Map<String, dynamic>) {
-        final lib = data[libraryPath];
-        if (lib is Map<String, dynamic>) return lib;
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  Future<void> _saveManifest(Map<String, dynamic> entries) async {
-    try {
-      final dir = await getApplicationSupportDirectory();
-      final file = File(p.join(dir.path, 'scan_cache.json'));
-      Map<String, dynamic> root = {};
-      try {
-        final existing = jsonDecode(await file.readAsString());
-        if (existing is Map<String, dynamic>) root = existing;
-      } catch (_) {}
-      root[libraryPath ?? ''] = entries;
-      await file.writeAsString(jsonEncode(root));
-    } catch (_) {}
   }
 
   Future<void> _loadExistingThumbnails() async {
@@ -315,11 +191,12 @@ class GalleryProvider extends ChangeNotifier {
   Future<void> _drainThumbQueue() async {
     if (_thumbing) return;
     _thumbing = true;
+    var changed = 0;
     try {
       while (_thumbPending.isNotEmpty) {
         final path = _thumbPending.first;
         _thumbPending.remove(path);
-        final photo = _photoByPath(path);
+        final photo = _photoIndex[path];
         if (photo == null) continue;
         _thumbInFlight.add(path);
         try {
@@ -334,7 +211,13 @@ class GalleryProvider extends ChangeNotifier {
                 _aspectRatios[path] = ratio;
                 photo.aspectRatio = ratio;
               }
-              notifyListeners();
+              changed++;
+              // Batch notifications to avoid re-laying out the grid on
+              // every single thumbnail.
+              if (changed % 12 == 0) {
+                notifyListeners();
+                changed = 0;
+              }
             }
           }
         } finally {
@@ -343,14 +226,8 @@ class GalleryProvider extends ChangeNotifier {
       }
     } finally {
       _thumbing = false;
+      if (changed > 0) notifyListeners();
     }
-  }
-
-  PhotoItem? _photoByPath(String path) {
-    for (final photo in _photos) {
-      if (photo.path == path) return photo;
-    }
-    return null;
   }
 
   List<Album> _buildAlbums() {
@@ -416,7 +293,7 @@ class GalleryProvider extends ChangeNotifier {
     list.sort((a, b) {
       final compare = switch (sortMode.field) {
         SortField.name => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-        SortField.dateModified => a.sortDate.compareTo(b.sortDate),
+        SortField.dateModified => a.modifiedAt.compareTo(b.modifiedAt),
         SortField.size => a.sizeBytes.compareTo(b.sizeBytes),
       };
       return sortMode.order == SortOrder.ascending ? compare : -compare;
@@ -426,21 +303,25 @@ class GalleryProvider extends ChangeNotifier {
 
   void setSort(SortField field, SortOrder order) {
     sortMode = SortMode(field: field, order: order);
+    _sectionsDirty = true;
     notifyListeners();
   }
 
   void toggleFavoritesOnly(bool value) {
     showFavoritesOnly = value;
+    _sectionsDirty = true;
     notifyListeners();
   }
 
   void setZoom(int level) {
     _zoomLevel = level.clamp(0, 3);
+    _sectionsDirty = true;
     notifyListeners();
   }
 
   void setSearchQuery(String query) {
     searchQuery = query;
+    _sectionsDirty = true;
     notifyListeners();
   }
 
@@ -454,9 +335,16 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   List<({String header, List<PhotoItem> photos})> get dateSections {
-    final source = showFavoritesOnly ? favorites : _photos;
-    return buildDateSections(_applySort(_applySearch(source)));
+    if (_sectionsDirty || _sectionsCache == null) {
+      final source = showFavoritesOnly ? favorites : _photos;
+      _sectionsCache = buildDateSections(_applySort(_applySearch(source)));
+      _sectionsDirty = false;
+    }
+    return _sectionsCache!;
   }
+
+  List<({String header, List<PhotoItem> photos})>? _sectionsCache;
+  bool _sectionsDirty = true;
 
   List<({String header, List<PhotoItem> photos})> buildDateSections(
       List<PhotoItem> list) {
@@ -464,7 +352,7 @@ class GalleryProvider extends ChangeNotifier {
 
     final groups = <String, List<PhotoItem>>{};
     for (final photo in list) {
-      final key = dateKey(photo.sortDate);
+      final key = dateKey(photo.modifiedAt);
       groups.putIfAbsent(key, () => []).add(photo);
     }
 
@@ -538,6 +426,7 @@ class GalleryProvider extends ChangeNotifier {
       _favoritePaths.add(path);
       photo.isFavorite = true;
     }
+    _sectionsDirty = true;
     notifyListeners();
   }
 
@@ -631,13 +520,11 @@ class GalleryProvider extends ChangeNotifier {
         await _database.removeNotes(photo.path);
         _notes.remove(photo.path);
       }
-      if (_dateOverrides.containsKey(photo.path)) {
-        await _database.removeDateOverride(photo.path);
-        _dateOverrides.remove(photo.path);
-      }
       await _database.removeMissingPaths([photo.path]);
       _photos.removeWhere((p) => p.path == photo.path);
+      _photoIndex.remove(photo.path);
       _albums = _buildAlbums();
+      _sectionsDirty = true;
       notifyListeners();
     } catch (_) {}
   }
@@ -656,16 +543,14 @@ class GalleryProvider extends ChangeNotifier {
           await _database.removeNotes(photo.path);
           _notes.remove(photo.path);
         }
-        if (_dateOverrides.containsKey(photo.path)) {
-          await _database.removeDateOverride(photo.path);
-          _dateOverrides.remove(photo.path);
-        }
         await _database.removeMissingPaths([photo.path]);
         _photos.removeWhere((p) => p.path == photo.path);
+        _photoIndex.remove(photo.path);
       } catch (_) {}
     }
     _favoritePaths = await _database.getFavoritePaths();
     _albums = _buildAlbums();
+    _sectionsDirty = true;
     await loadVirtualAlbums();
     notifyListeners();
   }
@@ -683,7 +568,9 @@ class GalleryProvider extends ChangeNotifier {
         await file.rename(target);
       }
       _photos.removeWhere((x) => x.path == photo.path);
+      _photoIndex.remove(photo.path);
       _albums = _buildAlbums();
+      _sectionsDirty = true;
       notifyListeners();
       return true;
     } catch (_) {

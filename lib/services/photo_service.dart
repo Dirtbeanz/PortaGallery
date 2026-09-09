@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -43,47 +42,15 @@ class PhotoService {
   }
 
   static Future<List<PhotoItem>> scanDirectory(String rootPath,
-      {Map<String, dynamic>? manifest,
-      Map<String, dynamic>? outManifest,
-      bool showHidden = false}) async {
+      {bool showHidden = false}) async {
     final photos = <PhotoItem>[];
-    await _scan(Directory(rootPath), photos, rootPath, manifest, outManifest,
-        showHidden: showHidden);
+    await _scan(Directory(rootPath), photos, rootPath, showHidden: showHidden);
     photos.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
     return photos;
   }
 
-/// Enriches photos missing a capture date by reading EXIF headers and
-/// Takeout sidecars. Run after the fast pass so metadata extraction never
-/// blocks the initial listing. Returns a map of path -> (dateMillis, description).
-static Future<Map<String, List<Object?>>> enrichDates(
-      List<PhotoItem> photos) async {
-    final pending = photos.where((p) => p.dateTaken == null).toList();
-    final results = <String, List<Object?>>{};
-    const batchSize = 16;
-    for (var i = 0; i < pending.length; i += batchSize) {
-      final batch = pending.sublist(
-          i, i + batchSize > pending.length ? pending.length : i + batchSize);
-      await Future.wait(batch.map((photo) async {
-        var dateTaken = readExifDateTaken(photo.path);
-        if (dateTaken == null) {
-          final sidecar = await _readTakeoutSidecar(photo.path);
-          dateTaken = sidecar.$1;
-          results[photo.path] = [
-            dateTaken?.millisecondsSinceEpoch,
-            sidecar.$2,
-          ];
-        } else {
-          results[photo.path] = [dateTaken.millisecondsSinceEpoch, null];
-        }
-      }));
-    }
-    return results;
-  }
-
-  static Future<void> _scan(Directory dir, List<PhotoItem> out, String rootPath,
-      Map<String, dynamic>? manifest, Map<String, dynamic>? outManifest,
-      {bool showHidden = false}) async {
+  static Future<void> _scan(Directory dir, List<PhotoItem> out,
+      String rootPath, {bool showHidden = false}) async {
     List<FileSystemEntity> entries;
     try {
       entries = await dir.list(followLinks: false).toList();
@@ -129,94 +96,24 @@ static Future<Map<String, List<Object?>>> enrichDates(
           return;
         }
 
-        final cached = manifest != null && outManifest != null
-            ? manifest[file.path] as Map<String, dynamic>?
-            : null;
-
-        DateTime? dateTaken;
-        String? description;
-
-        if (cached != null &&
-            cached['size'] == stat.size &&
-            cached['mtime'] == stat.modified.millisecondsSinceEpoch) {
-          // Reuse cached metadata: avoids re-reading sidecar JSONs and EXIF
-          // on every mount.
-          final cachedDate = cached['dateTaken'] as int?;
-          dateTaken = cachedDate != null
-              ? DateTime.fromMillisecondsSinceEpoch(cachedDate)
-              : null;
-          description = cached['description'] as String?;
-        }
-
         final parent = p.dirname(file.path);
         final relative =
             parent == rootAbs ? '' : p.relative(parent, from: rootAbs);
 
-        final photo = PhotoItem(
+        out.add(PhotoItem(
           path: file.path,
           name: p.basename(file.path),
           album: relative,
           sizeBytes: stat.size,
           modifiedAt: stat.modified,
           isVideo: isVideoPath(file.path),
-          dateTaken: dateTaken,
-          takeoutDescription: description,
-        );
-        out.add(photo);
-
-        if (outManifest != null) {
-          outManifest[file.path] = {
-            'size': stat.size,
-            'mtime': stat.modified.millisecondsSinceEpoch,
-            'dateTaken': dateTaken?.millisecondsSinceEpoch,
-            'description': description,
-          };
-        }
+        ));
       }));
     }
 
     for (final sub in subdirs) {
-      await _scan(sub, out, rootAbs, manifest, outManifest,
-          showHidden: showHidden);
+      await _scan(sub, out, rootAbs, showHidden: showHidden);
     }
-  }
-
-  static Future<(DateTime?, String?)> _readTakeoutSidecar(
-      String mediaPath) async {
-    DateTime? dateTaken;
-    String? description;
-    try {
-      final sidecarFile = File('$mediaPath.json');
-      if (!await sidecarFile.exists()) return (null, null);
-      final raw = await sidecarFile.readAsString();
-      if (raw.length > 2 * 1024 * 1024) return (null, null);
-      final data = jsonDecode(raw) as Map<String, dynamic>;
-
-      // Validate that this sidecar actually belongs to the media file:
-      // Google Takeout sidecars contain a "title" that mirrors the filename.
-      final title = data['title'];
-      if (title is String && title.isNotEmpty) {
-        final mediaName = p.basename(mediaPath);
-        if (title.trim() != mediaName) return (null, null);
-      }
-
-      final taken = data['photoTakenTime'];
-      if (taken is Map && taken['timestamp'] != null) {
-        final stamp = int.tryParse(taken['timestamp'].toString());
-        if (stamp != null && stamp > 0) {
-          dateTaken =
-              DateTime.fromMillisecondsSinceEpoch(stamp * 1000, isUtc: true)
-                  .toLocal();
-        }
-      }
-
-      final desc = data['description'];
-      if (desc is String && desc.trim().isNotEmpty) {
-        description = desc.trim();
-      }
-    } catch (_) {}
-
-    return (dateTaken, description);
   }
 
   static Future<void> importFile(String sourcePath, String libraryPath,
@@ -249,126 +146,6 @@ static Future<Map<String, List<Object?>>> enrichDates(
     final dims = readDimensions(path);
     if (dims == null || dims.$1 <= 0 || dims.$2 <= 0) return 1.0;
     return dims.$1 / dims.$2;
-  }
-
-  /// Reads the EXIF DateTimeOriginal / DateTime tag from a JPEG header
-  /// (the authoritative capture date — same source priorities Immich uses).
-  static DateTime? readExifDateTaken(String path) {
-    try {
-      final file = File(path);
-      final raf = file.openSync();
-      final header = raf.readSync(131072);
-      raf.closeSync();
-      final bytes = header;
-      if (bytes.length < 24) return null;
-      if (!(bytes[0] == 0xFF && bytes[1] == 0xD8)) return null;
-
-      var off = 2;
-      while (off + 9 < bytes.length) {
-        if (bytes[off] != 0xFF) {
-          off++;
-          continue;
-        }
-        final m = bytes[off + 1];
-        if (m == 0xD8 || m == 0xD9) {
-          off += 2;
-          continue;
-        }
-        if (m >= 0xD0 && m <= 0xDA) {
-          off += 2;
-          continue;
-        }
-        final len = (bytes[off + 2] << 8) + bytes[off + 3];
-        if (m == 0xE1 && off + 2 + len <= bytes.length) {
-          final date = exifDateOriginal(bytes, off + 4, len - 2);
-          if (date != null) return date;
-        }
-        off += 2 + len;
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  /// Parses IFD0, then the Exif sub-IFD, looking for DateTimeOriginal
-  /// (0x9003) with DateTime (0x0132) as fallback.
-  static DateTime? exifDateOriginal(List<int> b, int start, int length) {
-    try {
-      if (start + 6 + 8 > b.length || length < 14) return null;
-      if (!(b[start] == 0x45 && b[start + 1] == 0x78 &&
-          b[start + 2] == 0x69 && b[start + 3] == 0x66)) {
-        return null;
-      }
-      var p = start + 6;
-      final little = b[p] == 0x49;
-      p += 2;
-      final tag = u16(b, p, little);
-      p += 2;
-      final isTiff = tag == 0x002A || tag == 0x2A00;
-      if (!isTiff) return null;
-
-      final tiffBase = start + 6;
-      var ifd0Offset = u32(b, p, little);
-      var exifIfd = -1;
-      var dateTagValue = '';
-
-      void walkIfd(int absOffset) {
-        if (absOffset < 0 || absOffset + 2 > b.length) return;
-        var count = u16(b, absOffset, little);
-        if (absOffset + 2 + count * 12 > b.length) {
-          count = (b.length - absOffset - 2) ~/ 12;
-        }
-        for (var i = 0; i < count; i++) {
-          final e = absOffset + 2 + i * 12;
-          if (e + 12 > b.length) break;
-          final eTag = u16(b, e, little);
-          final eType = u16(b, e + 2, little);
-          final eCount = u32(b, e + 4, little);
-          if (eTag == 0x8769 && eType == 4 && eCount == 1) {
-            exifIfd = u32(b, e + 8, little);
-          } else if ((eTag == 0x9003 || eTag == 0x0132) && dateTagValue.isEmpty) {
-            final raw = dateAscii(b, e + 8, eType, eCount, little, tiffBase);
-            if (raw.isNotEmpty) dateTagValue = raw;
-          }
-        }
-      }
-
-      walkIfd(tiffBase + ifd0Offset);
-      if (dateTagValue.isEmpty && exifIfd >= 0) {
-        walkIfd(tiffBase + exifIfd);
-      }
-
-      if (dateTagValue.isEmpty) return null;
-      // Format: "YYYY:MM:DD HH:MM:SS"
-      if (dateTagValue.length < 19) return null;
-      return DateTime.tryParse(
-          "${dateTagValue.substring(0, 4)}-"
-          "${dateTagValue.substring(5, 7)}-"
-          "${dateTagValue.substring(8, 10)} "
-          "${dateTagValue.substring(11, 13)}:"
-          "${dateTagValue.substring(14, 16)}:"
-          "${dateTagValue.substring(17, 19)}");
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static String dateAscii(List<int> b, int valuePtr, int type, int count,
-      bool little, int tiffStart) {
-    try {
-      int abs;
-      if (type == 2) {
-        if (count <= 4) {
-          abs = valuePtr;
-        } else {
-          abs = tiffStart + u32(b, valuePtr, little);
-        }
-        if (abs + count > b.length) return '';
-        final codes = b.sublist(abs, abs + count);
-        final text = String.fromCharCodes(codes).trim();
-        return text;
-      }
-    } catch (_) {}
-    return '';
   }
 
   static (int, int)? readDimensions(String path) {

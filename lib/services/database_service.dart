@@ -41,12 +41,6 @@ class DatabaseService {
             )
           ''');
           await db.execute('''
-            CREATE TABLE date_overrides (
-              path TEXT PRIMARY KEY,
-              date_taken INTEGER NOT NULL
-            )
-          ''');
-          await db.execute('''
             CREATE TABLE virtual_albums (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT NOT NULL UNIQUE
@@ -71,12 +65,6 @@ class DatabaseService {
             ''');
           }
           if (oldVersion < 3) {
-            await db.execute('''
-              CREATE TABLE IF NOT EXISTS date_overrides (
-                path TEXT PRIMARY KEY,
-                date_taken INTEGER NOT NULL
-              )
-            ''');
             await db.execute('''
               CREATE TABLE IF NOT EXISTS virtual_albums (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,31 +136,6 @@ class DatabaseService {
   Future<void> removeNotes(String path) async {
     final db = await database;
     await db.delete('notes', where: 'path = ?', whereArgs: [path]);
-  }
-
-  Future<void> setDateOverride(String path, DateTime date) async {
-    final db = await database;
-    await db.insert(
-      'date_overrides',
-      {'path': path, 'date_taken': date.millisecondsSinceEpoch},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
-
-  Future<void> removeDateOverride(String path) async {
-    final db = await database;
-    await db.delete('date_overrides', where: 'path = ?', whereArgs: [path]);
-  }
-
-  Future<Map<String, DateTime>> getAllDateOverrides() async {
-    final db = await database;
-    final rows = await db.query('date_overrides');
-    final map = <String, DateTime>{};
-    for (final row in rows) {
-      map[row['path'] as String] =
-          DateTime.fromMillisecondsSinceEpoch(row['date_taken'] as int);
-    }
-    return map;
   }
 
   Future<int> createVirtualAlbum(String name) async {

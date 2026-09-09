@@ -13,6 +13,7 @@ import '../models/photo_item.dart';
 import '../models/photo_metadata.dart';
 import '../providers/gallery_provider.dart';
 import '../services/metadata_service.dart';
+import '../services/photo_service.dart';
 import '../widgets/notes_editor.dart';
 import '../widgets/video_player_view.dart';
 
@@ -51,8 +52,25 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final screenW = MediaQuery.of(context).size.width;
     final targetW = (screenW * dpr * 2).round().clamp(800, 2560);
+
+    // HEIC/RAW can't be decoded by Flutter's codec; show the cached JPEG
+    // preview instead.
+    if (PhotoService.isRawPath(photo.path) || _isHeic(photo.path)) {
+      final provider = context.read<GalleryProvider>();
+      final thumb = provider.thumbPathOrNull(photo);
+      if (thumb != null) {
+        return FileImage(File(thumb));
+      }
+      provider.requestThumbnails([photo]);
+    }
+
     return ResizeImage(FileImage(File(photo.path)),
         width: targetW, allowUpscaling: false);
+  }
+
+  bool _isHeic(String path) {
+    final ext = p.extension(path).toLowerCase();
+    return ext == '.heic' || ext == '.heif';
   }
 
   @override
@@ -137,10 +155,30 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                   heroAttributes: PhotoViewHeroAttributes(
                       tag: 'photo_${photo.path}_$index'),
                   onTapUp: (context, details, controllerValue) => _toggleUi(),
-                  errorBuilder: (context, error, stack) => const Center(
-                    child: Icon(Icons.broken_image_outlined,
-                        color: Colors.white54, size: 64),
-                  ),
+                  errorBuilder: (context, error, stack) {
+                    if (PhotoService.isRawPath(photo.path) ||
+                        _isHeic(photo.path)) {
+                      context.read<GalleryProvider>().requestThumbnails([photo]);
+                      return const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(color: Colors.white54),
+                            SizedBox(height: 12),
+                            Text(
+                              'Generating preview…',
+                              style:
+                                  TextStyle(color: Colors.white54, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return const Center(
+                      child: Icon(Icons.broken_image_outlined,
+                          color: Colors.white54, size: 64),
+                    );
+                  },
                 );
               },
             ),
@@ -438,9 +476,6 @@ class _MetadataSheetState extends State<_MetadataSheet> {
     if (meta.dateTaken != null) {
       rows.add(_row(context, Icons.photo_camera, 'Date taken',
           _formatDate(meta.dateTaken!)));
-    } else if (widget.photo.dateTaken != null) {
-      rows.add(_row(context, Icons.photo_camera, 'Date taken',
-          _formatDate(widget.photo.dateTaken!)));
     }
     if (meta.cameraMake != null || meta.cameraModel != null) {
       final camera = [meta.cameraMake, meta.cameraModel]

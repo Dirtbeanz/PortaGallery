@@ -19,7 +19,14 @@ class VideoPlayerView extends StatefulWidget {
 
 class _VideoPlayerViewState extends State<VideoPlayerView> {
   late final Player _player = Player();
-  late final VideoController _controller = VideoController(_player);
+  late final VideoController _controller = VideoController(
+    _player,
+    configuration: const VideoControllerConfiguration(
+      // FFmpeg-based hardware decoding where available; falls back to
+      // software safely. VA-API needs `intel-media-driver` on Intel GPUs.
+      hwdec: 'auto-safe',
+    ),
+  );
   bool _ready = false;
   bool _error = false;
   bool _renderFailed = false;
@@ -151,10 +158,36 @@ class _PortaVideoControlsState extends State<_PortaVideoControls> {
   bool _dragging = false;
   double _dragValue = 0;
   Timer? _hideTimer;
+  Timer? _pollTimer;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _playing = false;
+  bool _muted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 400), (_) {
+      if (!mounted) return;
+      final state = widget.player.state;
+      if (state.duration != _duration ||
+          state.playing != _playing ||
+          state.volume <= 0 != _muted ||
+          (_position - state.position).abs().inSeconds >= 1) {
+        setState(() {
+          _duration = state.duration;
+          _position = state.position;
+          _playing = state.playing;
+          _muted = state.volume <= 0;
+        });
+      }
+    });
+  }
 
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _pollTimer?.cancel();
     super.dispose();
   }
 
@@ -216,124 +249,100 @@ class _PortaVideoControlsState extends State<_PortaVideoControls> {
         color: Colors.black.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(24),
       ),
-      child: StreamBuilder<Duration>(
-        stream: widget.player.stream.position,
-        initialData: Duration.zero,
-        builder: (context, posSnapshot) {
-          final position = posSnapshot.data ?? Duration.zero;
-          return StreamBuilder<Duration>(
-            stream: widget.player.stream.duration,
-            initialData: Duration.zero,
-            builder: (context, durSnapshot) {
-              final duration = durSnapshot.data ?? Duration.zero;
-              final maxSeconds = duration.inSeconds > 0
-                  ? duration.inSeconds.toDouble()
-                  : 1.0;
-              final current = _dragging
-                  ? _dragValue
-                  : position.inSeconds
-                      .clamp(0, maxSeconds.round())
-                      .toDouble();
+      child: _buildBarRow(context),
+    );
+  }
 
-              return Row(
-                children: [
-                  StreamBuilder<bool>(
-                    stream: widget.player.stream.playing,
-                    initialData: false,
-                    builder: (context, snapshot) {
-                      final playing = snapshot.data ?? false;
-                      return IconButton(
-                        icon: Icon(
-                          playing ? Icons.pause : Icons.play_arrow,
-                          color: Colors.white,
-                        ),
-                        tooltip: playing ? 'Pause' : 'Play',
-                        onPressed: () {
-                          widget.player.playOrPause();
-                          _scheduleAutoHide();
-                        },
-                      );
-                    },
-                  ),
-                  Text(
-                    _formatDuration(position),
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                  ),
-                  Expanded(
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 3,
-                        thumbShape: const RoundSliderThumbShape(
-                            enabledThumbRadius: 6),
-                        overlayShape: const RoundSliderOverlayShape(
-                            overlayRadius: 12),
-                        activeTrackColor: Colors.white,
-                        inactiveTrackColor: Colors.white38,
-                        thumbColor: Colors.white,
-                      ),
-                      child: Slider(
-                        value: current.clamp(0.0, maxSeconds),
-                        max: maxSeconds,
-                        onChangeStart: (v) {
-                          _dragging = true;
-                          _dragValue = v;
-                          setState(() {});
-                        },
-                        onChanged: (v) {
-                          setState(() => _dragValue = v);
-                        },
-                        onChangeEnd: (v) {
-                          _dragging = false;
-                          widget.player
-                              .seek(Duration(seconds: v.round()));
-                          _scheduleAutoHide();
-                          setState(() {});
-                        },
-                      ),
-                    ),
-                  ),
-                  Text(
-                    _formatDuration(duration),
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                  ),
-                  StreamBuilder<double>(
-                    stream: widget.player.stream.volume,
-                    initialData: 100,
-                    builder: (context, snapshot) {
-                      final muted = (snapshot.data ?? 100) <= 0;
-                      return IconButton(
-                        icon: Icon(
-                          muted ? Icons.volume_off : Icons.volume_up,
-                          color: Colors.white,
-                        ),
-                        tooltip: muted ? 'Unmute' : 'Mute',
-                        onPressed: () {
-                          widget.player.setVolume(muted ? 100 : 0);
-                          _scheduleAutoHide();
-                        },
-                      );
-                    },
-                  ),
-                  if (widget.externalEnabled)
-                    IconButton(
-                      icon: const Icon(Icons.open_in_new, color: Colors.white),
-                      tooltip: 'Open with system player',
-                      onPressed: () async {
-                        final path = widget.filePath;
-                        if (path != null) {
-                          await ExternalPlayerService.launch(path);
-                        }
-                        try {
-                          await widget.player.pause();
-                        } catch (_) {}
-                      },
-                    ),
-                ],
-              );
+  Widget _buildBarRow(BuildContext context) {
+    final duration = _duration;
+    final position = _position;
+    final maxSeconds =
+        duration.inSeconds > 0 ? duration.inSeconds.toDouble() : 1.0;
+    final current = _dragging
+        ? _dragValue
+        : position.inSeconds.clamp(0, maxSeconds.round()).toDouble();
+
+    return Row(
+      children: [
+        IconButton(
+          icon: Icon(
+            _playing ? Icons.pause : Icons.play_arrow,
+            color: Colors.white,
+          ),
+          tooltip: _playing ? 'Pause' : 'Play',
+          onPressed: () {
+            widget.player.playOrPause();
+            setState(() => _playing = widget.player.state.playing);
+            _scheduleAutoHide();
+          },
+        ),
+        Text(
+          _formatDuration(position),
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+        ),
+        Expanded(
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              thumbShape:
+                  const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape:
+                  const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: Colors.white,
+              inactiveTrackColor: Colors.white38,
+              thumbColor: Colors.white,
+            ),
+            child: Slider(
+              value: current.clamp(0.0, maxSeconds),
+              max: maxSeconds,
+              onChangeStart: (v) {
+                _dragging = true;
+                _dragValue = v;
+                setState(() {});
+              },
+              onChanged: (v) {
+                setState(() => _dragValue = v);
+              },
+              onChangeEnd: (v) {
+                _dragging = false;
+                widget.player.seek(Duration(seconds: v.round()));
+                _scheduleAutoHide();
+                setState(() {});
+              },
+            ),
+          ),
+        ),
+        Text(
+          _formatDuration(duration),
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+        ),
+        IconButton(
+          icon: Icon(
+            _muted ? Icons.volume_off : Icons.volume_up,
+            color: Colors.white,
+          ),
+          tooltip: _muted ? 'Unmute' : 'Mute',
+          onPressed: () {
+            widget.player.setVolume(_muted ? 100 : 0);
+            setState(() => _muted = !_muted);
+            _scheduleAutoHide();
+          },
+        ),
+        if (widget.externalEnabled)
+          IconButton(
+            icon: const Icon(Icons.open_in_new, color: Colors.white),
+            tooltip: 'Open with system player',
+            onPressed: () async {
+              final path = widget.filePath;
+              if (path != null) {
+                await ExternalPlayerService.launch(path);
+              }
+              try {
+                await widget.player.pause();
+              } catch (_) {}
             },
-          );
-        },
-      ),
+          ),
+      ],
     );
   }
 

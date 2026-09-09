@@ -128,7 +128,6 @@ class SettingsScreen extends StatelessWidget {
     final photos = provider.photos;
     final videos = photos.where((p) => p.isVideo).length;
     final images = photos.length - videos;
-    final noDate = photos.where((p) => p.dateTaken == null).length;
     final totalBytes = photos.fold<int>(0, (sum, p) => sum + p.sizeBytes);
     final albums = <String, int>{};
     for (final photo in photos) {
@@ -137,12 +136,12 @@ class SettingsScreen extends StatelessWidget {
     }
 
     final buffer = StringBuffer()
-      ..writeln('path,name,album,type,size_bytes,date_taken')
+      ..writeln('path,name,album,type,size_bytes,date_modified')
       ..writeAll(
         photos.map((p) =>
             '${_csv(p.path)},${_csv(p.name)},${_csv(p.album.isEmpty ? 'Photos' : p.album)},'
             '${p.isVideo ? 'video' : 'photo'},${p.sizeBytes},'
-            '${p.dateTaken?.toIso8601String() ?? ''}'),
+            '${p.modifiedAt.toIso8601String()}'),
         '\n',
       );
 
@@ -171,7 +170,6 @@ class SettingsScreen extends StatelessWidget {
               children: [
                 Text('Total items: ${photos.length}'),
                 Text('Photos: $images  •  Videos: $videos'),
-                Text('Missing capture date: $noDate'),
                 Text('Total size: ${_bytes(totalBytes)}'),
                 const Divider(),
                 const Text('Albums:',

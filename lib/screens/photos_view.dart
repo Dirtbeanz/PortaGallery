@@ -35,8 +35,7 @@ class _PhotosViewState extends State<PhotosView> {
 
     return Column(
       children: [
-        if (provider.isLoading || provider.isEnriching)
-          const LinearProgressIndicator(minHeight: 2),
+        if (provider.isLoading) const LinearProgressIndicator(minHeight: 2),
         _Toolbar(
           provider: provider,
           selectionMode: _selectionMode,
@@ -173,11 +172,6 @@ class _PhotosViewState extends State<PhotosView> {
                 onPressed: () => _addToVirtualAlbum(context, provider),
               ),
               IconButton(
-                icon: const Icon(Icons.edit_calendar),
-                tooltip: 'Fix dates',
-                onPressed: () => _fixDates(context, provider),
-              ),
-              IconButton(
                 icon: const Icon(Icons.share),
                 tooltip: 'Share',
                 onPressed: () => _shareSelected(),
@@ -192,119 +186,6 @@ class _PhotosViewState extends State<PhotosView> {
         ),
       ),
     );
-  }
-
-  Future<void> _fixDates(
-      BuildContext context, GalleryProvider provider) async {
-    final photos = _selectedPhotos;
-    if (photos.isEmpty) return;
-
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      builder: (context) {
-        return SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              const ListTile(
-                title: Text('Fix dates'),
-                subtitle: Text('Adjust capture dates for the selection'),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.event),
-                title: const Text('Set all to a specific date…'),
-                onTap: () => Navigator.of(context).pop('set'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.schedule),
-                title: const Text('Shift by a duration…'),
-                onTap: () => Navigator.of(context).pop('shift'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.undo),
-                title: const Text('Reset to file dates'),
-                onTap: () => Navigator.of(context).pop('clear'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (choice == null || !context.mounted) return;
-
-    switch (choice) {
-      case 'set':
-        final date = await showDatePicker(
-          context: context,
-          initialDate: DateTime.now(),
-          firstDate: DateTime(1970),
-          lastDate: DateTime(2100),
-        );
-        if (date == null) return;
-        if (!context.mounted) return;
-        final time = await showTimePicker(
-          context: context,
-          initialTime: TimeOfDay.now(),
-        );
-        if (!context.mounted) return;
-        final target =
-            DateTime(date.year, date.month, date.day, time?.hour ?? 12,
-                time?.minute ?? 0);
-        await provider.setDateOverrides(photos, target);
-        break;
-      case 'shift':
-        final days = await _promptInt(context, 'Shift by days (can be negative)');
-        if (days == null || !context.mounted) return;
-        final hours = await _promptInt(context, 'Shift by hours (optional)') ?? 0;
-        if (!context.mounted) return;
-        await provider.shiftDateOverrides(
-            photos, Duration(days: days, hours: hours));
-        break;
-      case 'clear':
-        await provider.clearDateOverrides(photos);
-        await provider.rescan();
-        break;
-    }
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Dates updated')),
-      );
-    }
-  }
-
-  Future<int?> _promptInt(BuildContext context, String label) async {
-    final controller = TextEditingController();
-    final value = await showDialog<int>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(label),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            keyboardType: TextInputType.numberWithOptions(signed: true),
-            decoration: const InputDecoration(hintText: '0'),
-            onSubmitted: (v) =>
-                Navigator.of(context).pop(int.tryParse(v.trim()) ?? 0),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(int.tryParse(controller.text.trim()) ?? 0),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
-    return value;
   }
 
   Future<void> _addToVirtualAlbum(

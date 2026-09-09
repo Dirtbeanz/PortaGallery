@@ -38,7 +38,7 @@ class _VirtualAlbumScreenState extends State<VirtualAlbumScreen> {
     final items = provider.photos
         .where((p) => paths.contains(p.path))
         .toList()
-      ..sort((a, b) => b.sortDate.compareTo(a.sortDate));
+      ..sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
     if (!mounted) return;
     setState(() {
       _items = items;
