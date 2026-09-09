@@ -58,8 +58,6 @@ class PhotoService {
       return;
     }
 
-    // Respect .nomedia markers (e.g. WhatsApp media folders, caches) unless
-    // hidden folders are explicitly enabled.
     if (!showHidden) {
       for (final entry in entries) {
         final name = p.basename(entry.path).toLowerCase();
@@ -83,7 +81,6 @@ class PhotoService {
       }
     }
 
-    // Stat files in parallel batches (fewer syscalls than per-file awaits).
     const batchSize = 24;
     for (var i = 0; i < files.length; i += batchSize) {
       final batch = files.sublist(
@@ -111,8 +108,13 @@ class PhotoService {
       }));
     }
 
-    for (final sub in subdirs) {
-      await _scan(sub, out, rootAbs, showHidden: showHidden);
+    // Scan subdirectories in parallel (batches of 8 to avoid fd exhaustion).
+    const dirBatchSize = 8;
+    for (var i = 0; i < subdirs.length; i += dirBatchSize) {
+      final batch = subdirs.sublist(
+          i, i + dirBatchSize > subdirs.length ? subdirs.length : i + dirBatchSize);
+      await Future.wait(
+          batch.map((sub) => _scan(sub, out, rootAbs, showHidden: showHidden)));
     }
   }
 

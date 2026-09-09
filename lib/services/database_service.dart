@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../models/photo_item.dart';
 import '../models/photo_notes.dart';
 
 class DatabaseService {
@@ -25,7 +26,7 @@ class DatabaseService {
     _db = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 4,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE favorites (
@@ -53,6 +54,16 @@ class DatabaseService {
               PRIMARY KEY (album_id, path)
             )
           ''');
+          await db.execute('''
+            CREATE TABLE photo_cache (
+              path TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              album TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              modified_at INTEGER NOT NULL,
+              is_video INTEGER NOT NULL
+            )
+          ''');
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -76,6 +87,18 @@ class DatabaseService {
                 album_id INTEGER NOT NULL,
                 path TEXT NOT NULL,
                 PRIMARY KEY (album_id, path)
+              )
+            ''');
+          }
+          if (oldVersion < 4) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS photo_cache (
+                path TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                album TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                modified_at INTEGER NOT NULL,
+                is_video INTEGER NOT NULL
               )
             ''');
           }
@@ -214,7 +237,41 @@ class DatabaseService {
       batch.delete('date_overrides', where: 'path = ?', whereArgs: [path]);
       batch.delete('virtual_album_items',
           where: 'path = ?', whereArgs: [path]);
+      batch.delete('photo_cache', where: 'path = ?', whereArgs: [path]);
     }
     await batch.commit(noResult: true);
+  }
+
+  Future<void> savePhotoCache(List<PhotoItem> photos) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('photo_cache');
+      final batch = txn.batch();
+      for (final photo in photos) {
+        batch.insert('photo_cache', {
+          'path': photo.path,
+          'name': photo.name,
+          'album': photo.album,
+          'size_bytes': photo.sizeBytes,
+          'modified_at': photo.modifiedAt.millisecondsSinceEpoch,
+          'is_video': photo.isVideo ? 1 : 0,
+        });
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<List<PhotoItem>?> loadPhotoCache() async {
+    final db = await database;
+    final rows = await db.query('photo_cache');
+    if (rows.isEmpty) return null;
+    return rows.map((r) => PhotoItem(
+      path: r['path'] as String,
+      name: r['name'] as String,
+      album: r['album'] as String,
+      sizeBytes: r['size_bytes'] as int,
+      modifiedAt: DateTime.fromMillisecondsSinceEpoch(r['modified_at'] as int),
+      isVideo: (r['is_video'] as int) == 1,
+    )).toList();
   }
 }

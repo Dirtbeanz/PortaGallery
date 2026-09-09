@@ -24,8 +24,9 @@ class GalleryProvider extends ChangeNotifier {
   List<Album> get albums => _albums;
 
   Set<String> _favoritePaths = {};
+  List<PhotoItem>? _favoritesCache;
   List<PhotoItem> get favorites =>
-      _photos.where((p) => _favoritePaths.contains(p.path)).toList();
+      _favoritesCache ??= _photos.where((p) => _favoritePaths.contains(p.path)).toList();
 
   Map<String, PhotoNotes> _notes = {};
   PhotoNotes getNotes(String path) => _notes[path] ?? const PhotoNotes();
@@ -47,6 +48,9 @@ class GalleryProvider extends ChangeNotifier {
   final Map<String, double> _aspectRatios = {};
   Map<String, double> get aspectRatios => _aspectRatios;
 
+  List<PhotoItem>? _visiblePhotosCache;
+  bool _visiblePhotosDirty = true;
+
   bool get showHiddenFolders => _config.showHiddenFolders;
   bool get isDriveMissing =>
       isConfigured &&
@@ -62,14 +66,31 @@ class GalleryProvider extends ChangeNotifier {
   Future<void> initialize() async {
     await _config.load();
     libraryPath = _config.libraryPath;
-    // Consider the app "configured" as long as a library path is set; the
-    // drive-missing banner handles the disconnected state.
     isConfigured = _config.hasLibrary;
     _favoritePaths = await _database.getFavoritePaths();
     _notes = await _database.getAllNotes();
     _virtualAlbums = await _database.getVirtualAlbums();
     if (isConfigured) {
-      await rescan();
+      // Load cached photo list for instant UI, then rescan in background.
+      final cached = await _database.loadPhotoCache();
+      if (cached != null && cached.isNotEmpty) {
+        for (final photo in cached) {
+          photo.isFavorite = _favoritePaths.contains(photo.path);
+        }
+        _photos = cached;
+        _photoIndex = {for (final photo in cached) photo.path: photo};
+        _albums = _buildAlbums();
+        _sectionsDirty = true;
+        _visiblePhotosDirty = true;
+        _favoritesCache = null;
+        isConfigured = true;
+        isLoading = true;
+        notifyListeners();
+        // Fire-and-forget background rescan; it will notify when done.
+        rescan();
+      } else {
+        await rescan();
+      }
     }
     _startDriveWatcher();
     notifyListeners();
@@ -142,7 +163,11 @@ class GalleryProvider extends ChangeNotifier {
       _photoIndex = {for (final photo in scanned) photo.path: photo};
       _albums = _buildAlbums();
       _sectionsDirty = true;
+      _visiblePhotosDirty = true;
+      _favoritesCache = null;
       isConfigured = true;
+      // Persist scanned photos so next startup is instant.
+      _database.savePhotoCache(scanned);
       await _loadExistingThumbnails();
     } finally {
       isLoading = false;
@@ -153,22 +178,24 @@ class GalleryProvider extends ChangeNotifier {
   Future<void> _loadExistingThumbnails() async {
     final dir = await ThumbnailService.cacheDir();
     final map = <String, String>{};
-    var i = 0;
-    for (final photo in _photos) {
-      final candidate =
-          p.join(dir.path, '${ThumbnailService.key(photo)}.jpg');
-      if (File(candidate).existsSync()) {
-        map[photo.path] = candidate;
-        final dims = PhotoService.readDimensions(candidate);
-        if (dims != null && dims.$2 > 0) {
-          final ratio = dims.$1 / dims.$2;
-          _aspectRatios[photo.path] = ratio;
-          photo.aspectRatio = ratio;
+    const batchSize = 50;
+    for (var i = 0; i < _photos.length; i += batchSize) {
+      final end = i + batchSize > _photos.length ? _photos.length : i + batchSize;
+      await Future.wait(_photos.sublist(i, end).map((photo) async {
+        final candidate =
+            p.join(dir.path, '${ThumbnailService.key(photo)}.jpg');
+        if (await File(candidate).exists()) {
+          map[photo.path] = candidate;
+          final dims = PhotoService.readDimensions(candidate);
+          if (dims != null && dims.$2 > 0) {
+            final ratio = dims.$1 / dims.$2;
+            _aspectRatios[photo.path] = ratio;
+            photo.aspectRatio = ratio;
+          }
         }
-      }
-      if (++i % 200 == 0) {
-        await Future<void>.delayed(Duration.zero);
-      }
+      }));
+      // Yield to the event loop so the UI stays responsive.
+      await Future<void>.delayed(Duration.zero);
     }
     _thumbPaths = map;
     _thumbPending.clear();
@@ -194,34 +221,53 @@ class GalleryProvider extends ChangeNotifier {
     var changed = 0;
     try {
       while (_thumbPending.isNotEmpty) {
-        final path = _thumbPending.first;
-        _thumbPending.remove(path);
-        final photo = _photoIndex[path];
-        if (photo == null) continue;
-        _thumbInFlight.add(path);
-        try {
-          final ok = await ThumbnailService.generate(photo);
-          if (ok) {
-            final target = await ThumbnailService.expectedPath(photo);
-            if (await File(target).exists()) {
-              _thumbPaths[path] = target;
-              final dims = PhotoService.readDimensions(target);
-              if (dims != null && dims.$2 > 0) {
-                final ratio = dims.$1 / dims.$2;
-                _aspectRatios[path] = ratio;
-                photo.aspectRatio = ratio;
-              }
-              changed++;
-              // Batch notifications to avoid re-laying out the grid on
-              // every single thumbnail.
-              if (changed % 12 == 0) {
-                notifyListeners();
-                changed = 0;
+        // Collect a batch of pending paths.
+        final batch = <String>[];
+        while (batch.length < 6 && _thumbPending.isNotEmpty) {
+          final path = _thumbPending.first;
+          _thumbPending.remove(path);
+          final photo = _photoIndex[path];
+          if (photo == null) continue;
+          _thumbInFlight.add(path);
+          batch.add(path);
+        }
+        if (batch.isEmpty) continue;
+
+        // Generate thumbnails in parallel.
+        final results = await Future.wait(batch.map((path) async {
+          final photo = _photoIndex[path]!;
+          try {
+            final ok = await ThumbnailService.generate(photo);
+            if (ok) {
+              final target = await ThumbnailService.expectedPath(photo);
+              if (await File(target).exists()) {
+                final dims = PhotoService.readDimensions(target);
+                double? ratio;
+                if (dims != null && dims.$2 > 0) {
+                  ratio = dims.$1 / dims.$2;
+                  _aspectRatios[path] = ratio;
+                  photo.aspectRatio = ratio;
+                }
+                return (path: path, target: target);
               }
             }
+          } finally {
+            _thumbInFlight.remove(path);
           }
-        } finally {
-          _thumbInFlight.remove(path);
+          return null;
+        }));
+
+        for (final r in results) {
+          if (r != null) {
+            _thumbPaths[r.path] = r.target;
+            changed++;
+          }
+        }
+
+        // Batch notifications to avoid re-laying out the grid on every thumbnail.
+        if (changed >= 12) {
+          notifyListeners();
+          changed = 0;
         }
       }
     } finally {
@@ -272,8 +318,12 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   List<PhotoItem> get visiblePhotos {
-    final source = showFavoritesOnly ? favorites : _photos;
-    return _applySort(_applySearch(source));
+    if (_visiblePhotosDirty || _visiblePhotosCache == null) {
+      final source = showFavoritesOnly ? favorites : _photos;
+      _visiblePhotosCache = _applySort(_applySearch(source));
+      _visiblePhotosDirty = false;
+    }
+    return _visiblePhotosCache!;
   }
 
   List<PhotoItem> _applySearch(List<PhotoItem> input) {
@@ -304,12 +354,15 @@ class GalleryProvider extends ChangeNotifier {
   void setSort(SortField field, SortOrder order) {
     sortMode = SortMode(field: field, order: order);
     _sectionsDirty = true;
+    _visiblePhotosDirty = true;
     notifyListeners();
   }
 
   void toggleFavoritesOnly(bool value) {
     showFavoritesOnly = value;
     _sectionsDirty = true;
+    _visiblePhotosDirty = true;
+    _favoritesCache = null;
     notifyListeners();
   }
 
@@ -322,16 +375,16 @@ class GalleryProvider extends ChangeNotifier {
   void setSearchQuery(String query) {
     searchQuery = query;
     _sectionsDirty = true;
+    _visiblePhotosDirty = true;
     notifyListeners();
   }
 
   double getAspectRatio(PhotoItem photo) {
     final cached = _aspectRatios[photo.path];
     if (cached != null) return cached;
-    final ratio = PhotoService.readAspectRatio(photo.path);
-    _aspectRatios[photo.path] = ratio;
-    photo.aspectRatio = ratio;
-    return ratio;
+    // Return default and let thumbnail generation populate the real ratio.
+    // Avoids reading the full original file which is very slow for large libraries.
+    return 1.0;
   }
 
   List<({String header, List<PhotoItem> photos})> get dateSections {
@@ -427,6 +480,8 @@ class GalleryProvider extends ChangeNotifier {
       photo.isFavorite = true;
     }
     _sectionsDirty = true;
+    _visiblePhotosDirty = true;
+    _favoritesCache = null;
     notifyListeners();
   }
 
@@ -441,6 +496,8 @@ class GalleryProvider extends ChangeNotifier {
         _favoritePaths.remove(photo.path);
       }
     }
+    _visiblePhotosDirty = true;
+    _favoritesCache = null;
     notifyListeners();
   }
 
@@ -525,6 +582,8 @@ class GalleryProvider extends ChangeNotifier {
       _photoIndex.remove(photo.path);
       _albums = _buildAlbums();
       _sectionsDirty = true;
+      _visiblePhotosDirty = true;
+      _favoritesCache = null;
       notifyListeners();
     } catch (_) {}
   }
@@ -551,6 +610,8 @@ class GalleryProvider extends ChangeNotifier {
     _favoritePaths = await _database.getFavoritePaths();
     _albums = _buildAlbums();
     _sectionsDirty = true;
+    _visiblePhotosDirty = true;
+    _favoritesCache = null;
     await loadVirtualAlbums();
     notifyListeners();
   }
@@ -571,6 +632,8 @@ class GalleryProvider extends ChangeNotifier {
       _photoIndex.remove(photo.path);
       _albums = _buildAlbums();
       _sectionsDirty = true;
+      _visiblePhotosDirty = true;
+      _favoritesCache = null;
       notifyListeners();
       return true;
     } catch (_) {
