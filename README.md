@@ -35,6 +35,23 @@ experience — albums, favorites, search, zoom, tags, and more.
   move, share, or delete.
 - **Dark / light theme** following the system setting.
 
+## Performance
+
+v1.4.0 brings major speed improvements for large libraries:
+
+- **Instant startup** — the photo list is cached in SQLite, so the app loads
+  immediately on second launch while a background rescan picks up any changes.
+- **Parallel directory scanning** — subdirectories are scanned in batches of 8
+  simultaneously instead of one at a time.
+- **Parallel thumbnail generation** — 6 thumbnails are generated at once instead
+  of sequentially.
+- **Async batched I/O** — thumbnail cache lookups and file existence checks run
+  in parallel batches of 50 instead of synchronously one-by-one.
+- **Cached computed results** — filtered/sorted photo lists and favorites are
+  cached and only recomputed when the underlying data changes.
+- **No full-file reads for aspect ratios** — aspect ratios are populated from
+  cached thumbnails instead of reading each original image file.
+
 ## How it works
 
 On first launch you choose the folder that contains your photos (pick it with
@@ -116,9 +133,10 @@ lib/
   providers/gallery_provider.dart  Central state (ChangeNotifier)
   services/
     config_service.dart         Config file (library path)
-    database_service.dart       SQLite (favorites + tags/comments)
+    database_service.dart       SQLite (favorites, tags/comments, photo cache)
     photo_service.dart          Directory scanning, import/export, dimensions
     metadata_service.dart       EXIF reading
+    thumbnail_service.dart      Thumbnail generation & caching
     permission_service.dart     Android storage permissions
   screens/                      Home, photos, albums, favorites, viewer, settings
   widgets/                      Video player, tags editor, path dialog, photo grid
