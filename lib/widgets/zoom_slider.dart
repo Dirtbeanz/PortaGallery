@@ -12,16 +12,16 @@ class ZoomSlider extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
-          icon: const Icon(Icons.zoom_out, size: 18),
+          icon: const Icon(Icons.zoom_out, size: 22),
           visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
           padding: EdgeInsets.zero,
           onPressed: () => provider.setZoom(provider.zoomLevel - 1),
         ),
         IconButton(
-          icon: const Icon(Icons.zoom_in, size: 18),
+          icon: const Icon(Icons.zoom_in, size: 22),
           visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
           padding: EdgeInsets.zero,
           onPressed: () => provider.setZoom(provider.zoomLevel + 1),
         ),

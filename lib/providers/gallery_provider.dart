@@ -222,8 +222,10 @@ class GalleryProvider extends ChangeNotifier {
     if (_thumbing) return;
     _thumbing = true;
     var changed = 0;
+    var generated = 0;
+    const maxPerCycle = 50; // Limit per drain cycle to prevent memory pressure.
     try {
-      while (_thumbPending.isNotEmpty) {
+      while (_thumbPending.isNotEmpty && generated < maxPerCycle) {
         // Collect a batch of pending paths.
         final batch = <String>[];
         while (batch.length < 3 && _thumbPending.isNotEmpty) {
@@ -264,6 +266,7 @@ class GalleryProvider extends ChangeNotifier {
           if (r != null) {
             _thumbPaths[r.path] = r.target;
             changed++;
+            generated++;
           }
         }
 
@@ -272,10 +275,17 @@ class GalleryProvider extends ChangeNotifier {
           notifyListeners();
           changed = 0;
         }
+
+        // Yield to let the UI breathe.
+        await Future<void>.delayed(Duration.zero);
       }
     } finally {
       _thumbing = false;
       if (changed > 0) notifyListeners();
+      // If there are still pending items, schedule another cycle.
+      if (_thumbPending.isNotEmpty) {
+        Future.delayed(const Duration(milliseconds: 100), _drainThumbQueue);
+      }
     }
   }
 
@@ -373,7 +383,8 @@ class GalleryProvider extends ChangeNotifier {
 
   void setZoom(int level) {
     _zoomLevel = level.clamp(0, 4);
-    _sectionsDirty = true;
+    // Don't mark sections dirty — date groupings don't change with zoom.
+    // Just notify so the grid relayouts.
     notifyListeners();
   }
 
@@ -423,13 +434,8 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   String dateKey(DateTime dt) {
-    switch (_zoomLevel) {
-      case 0:
-      case 1:
-        return '${dt.year}-${_pad(dt.month)}';
-      default:
-        return '${dt.year}-${_pad(dt.month)}-${_pad(dt.day)}';
-    }
+    // Always group by day — sections are independent of zoom level.
+    return '${dt.year}-${_pad(dt.month)}-${_pad(dt.day)}';
   }
 
   static const List<String> _monthNames = [

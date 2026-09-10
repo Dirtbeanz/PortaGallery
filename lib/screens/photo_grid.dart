@@ -40,7 +40,6 @@ class _PhotoGridState extends State<PhotoGrid> {
   String? _activeLabel;
   bool _showLabel = false;
   List<double> _sectionStarts = [];
-  double _lastTileWidth = 120;
   String? _pendingAnchor;
 
   @override
@@ -68,23 +67,15 @@ class _PhotoGridState extends State<PhotoGrid> {
 
   void _captureAnchor(PhotoGrid oldWidget) {
     if (!_scrollController.hasClients) return;
-    final offset = _scrollController.offset;
     if (oldWidget.sections.isEmpty) return;
-
-    final starts = _computeSectionStarts(
-        oldWidget.sections, _lastTileWidth, oldWidget.columns);
-    var sectionIndex = 0;
-    for (var i = 0; i < starts.length; i++) {
-      if (starts[i] <= offset + 8) sectionIndex = i;
+    final offset = _scrollController.offset;
+    for (var i = 0; i < _sectionStarts.length; i++) {
+      if (_sectionStarts[i] <= offset + 8) {
+        _pendingAnchor = oldWidget.sections[i].photos.isNotEmpty
+            ? oldWidget.sections[i].photos.first.path
+            : null;
+      }
     }
-    final section = oldWidget.sections[sectionIndex];
-    final within = (offset - starts[sectionIndex]).clamp(0.0, double.infinity);
-    final rowHeight = _lastTileWidth + 4.0;
-    final row = (within / rowHeight).floor();
-    final index = (row * oldWidget.columns)
-        .clamp(0, math.max(0, section.photos.length - 1))
-        .toInt();
-    _pendingAnchor = section.photos[index].path;
   }
 
   void _restoreAnchor() {
@@ -92,21 +83,18 @@ class _PhotoGridState extends State<PhotoGrid> {
     if (anchor == null || !_scrollController.hasClients) return;
     _pendingAnchor = null;
 
-    final starts = _computeSectionStarts(
-        widget.sections, _lastTileWidth, widget.columns);
     for (var s = 0; s < widget.sections.length; s++) {
       final photos = widget.sections[s].photos;
-      final photoIndex = photos.indexWhere((p) => p.path == anchor);
-      if (photoIndex < 0) continue;
-      final row = photoIndex ~/ widget.columns;
-      final rowHeight = _lastTileWidth + 4.0;
-      final target = starts[s] + row * rowHeight;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_scrollController.hasClients) return;
-        _scrollController.jumpTo(target.clamp(
-            0.0, _scrollController.position.maxScrollExtent));
-      });
-      break;
+      if (photos.isEmpty) continue;
+      if (photos.first.path == anchor || photos.any((p) => p.path == anchor)) {
+        final target = _sectionStarts[s];
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_scrollController.hasClients) return;
+          _scrollController.jumpTo(
+              target.clamp(0.0, _scrollController.position.maxScrollExtent));
+        });
+        break;
+      }
     }
   }
 
@@ -117,6 +105,7 @@ class _PhotoGridState extends State<PhotoGrid> {
     for (var i = 0; i < _sectionStarts.length; i++) {
       if (_sectionStarts[i] <= offset) index = i;
     }
+    if (index >= widget.sections.length) return;
     final label = widget.sections[index].header;
     if (label != _activeLabel || !_showLabel) {
       setState(() {
@@ -171,18 +160,25 @@ class _PhotoGridState extends State<PhotoGrid> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        const spacing = 4.0;
-        const hPadding = 4.0;
+        const spacing = 2.0;
+        const hPadding = 2.0;
         final width = constraints.maxWidth;
-        final colCount = math.max(1, widget.columns);
-        final tileWidth =
-            (width - hPadding * 2 - (colCount - 1) * spacing) / colCount;
 
-        _lastTileWidth = tileWidth;
-        _sectionStarts = _computeSectionStarts(
-            widget.sections, tileWidth, colCount);
+        // Compute section starts for scroll indicator.
+        _sectionStarts = [];
+        var acc = 0.0;
+        for (final section in widget.sections) {
+          _sectionStarts.add(acc);
+          acc += 46; // header
+          final rows = _buildRows(section.photos, width, hPadding, spacing);
+          for (final row in rows) {
+            acc += row.height + spacing;
+          }
+        }
+
         if (_pendingAnchor != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => _restoreAnchor());
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _restoreAnchor());
         }
 
         return Stack(
@@ -195,17 +191,17 @@ class _PhotoGridState extends State<PhotoGrid> {
               radius: const Radius.circular(10),
               child: CustomScrollView(
                 controller: _scrollController,
+                cacheExtent: 800,
                 slivers: [
                   for (final section in widget.sections) ...[
                     SliverToBoxAdapter(
                         child: _DateHeader(label: section.header)),
-                    _buildSection(
+                    _buildJustifiedSection(
                       context,
                       section.photos,
-                      tileWidth,
-                      colCount,
-                      spacing,
+                      width,
                       hPadding,
+                      spacing,
                     ),
                   ],
                 ],
@@ -247,36 +243,76 @@ class _PhotoGridState extends State<PhotoGrid> {
     );
   }
 
-  List<double> _computeSectionStarts(
-      List<({String header, List<PhotoItem> photos})> sections,
-      double tileWidth,
-      int colCount) {
-    const headerHeight = 46.0;
-    const rowSpacing = 4.0;
-    final starts = <double>[];
-    var acc = 0.0;
-    for (final section in sections) {
-      starts.add(acc);
-      acc += headerHeight;
-      final rows = (section.photos.length / colCount).ceil();
-      acc += rows * (tileWidth + rowSpacing);
+  double _rowHeight(double containerWidth) {
+    // Immich-style: row height scales with zoom level and container width.
+    // Higher columns = smaller rows, lower columns = larger rows.
+    final colCount = math.max(1, widget.columns);
+    if (widget.squareTiles) {
+      return (containerWidth - (colCount - 1) * 2) / colCount;
     }
-    return starts;
+    // Justified mode: fixed row height based on zoom.
+    switch (widget.columns) {
+      case 0:
+        return 80;
+      case 1:
+        return 120;
+      case 2:
+        return 160;
+      case 3:
+        return 200;
+      default:
+        return 240;
+    }
   }
 
-  Widget _buildSection(
+  List<_JustifiedRow> _buildRows(
+      List<PhotoItem> photos, double width, double hPadding, double spacing) {
+    final provider = context.read<GalleryProvider>();
+    final availableWidth = width - hPadding * 2;
+    final rowHeight = _rowHeight(width);
+    final rows = <_JustifiedRow>[];
+    var currentRow = <_RowItem>[];
+    var currentWidth = 0.0;
+
+    for (final photo in photos) {
+      final ratio = provider.getAspectRatio(photo);
+      final itemWidth = rowHeight * ratio;
+      currentRow.add(_RowItem(photo: photo, width: itemWidth));
+      currentWidth += itemWidth + spacing;
+
+      if (currentWidth >= availableWidth) {
+        // Scale row to fill width.
+        final totalItemWidth = currentRow.fold<double>(
+            0, (sum, item) => sum + item.width);
+        final totalSpacing = (currentRow.length - 1) * spacing;
+        final scale = (availableWidth - totalSpacing) / totalItemWidth;
+        final scaledRow = currentRow
+            .map((item) =>
+                _RowItem(photo: item.photo, width: item.width * scale))
+            .toList();
+        rows.add(_JustifiedRow(items: scaledRow, height: rowHeight * scale));
+        currentRow = [];
+        currentWidth = 0;
+      }
+    }
+
+    // Last row: don't scale, use natural height.
+    if (currentRow.isNotEmpty) {
+      rows.add(_JustifiedRow(items: currentRow, height: rowHeight));
+    }
+
+    return rows;
+  }
+
+  Widget _buildJustifiedSection(
     BuildContext context,
     List<PhotoItem> photos,
-    double tileWidth,
-    int colCount,
-    double spacing,
+    double width,
     double hPadding,
+    double spacing,
   ) {
     final provider = context.read<GalleryProvider>();
-    final rows = <List<PhotoItem>>[];
-    for (var i = 0; i < photos.length; i += colCount) {
-      rows.add(photos.sublist(i, math.min(i + colCount, photos.length)));
-    }
+    final rows = _buildRows(photos, width, hPadding, spacing);
 
     return SliverPadding(
       padding: EdgeInsets.symmetric(horizontal: hPadding),
@@ -284,36 +320,33 @@ class _PhotoGridState extends State<PhotoGrid> {
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final row = rows[index];
-            provider.requestThumbnails(row);
-            final children = <Widget>[];
-            for (var j = 0; j < row.length; j++) {
-              if (j > 0) children.add(const SizedBox(width: 4));
-              final photo = row[j];
-              final height = widget.squareTiles
-                  ? tileWidth
-                  : tileWidth / provider.getAspectRatio(photo);
-              children.add(SizedBox(
-                width: tileWidth,
-                height: height,
-                child: RepaintBoundary(
-                  child: _PhotoTile(
-                    photo: photo,
-                    index: index * colCount + j,
-                    selected: widget.selectedPaths.contains(photo.path),
-                    cacheWidth: widget.squareTiles ? 150 : 400,
-                    thumbPath: provider.thumbPathOrNull(photo),
-                    onTap: widget.onPhotoTap,
-                    onLongPress: widget.onPhotoLongPress,
-                    viewerPhotos: widget.viewerPhotos,
-                  ),
-                ),
-              ));
-            }
+            provider.requestThumbnails(row.items.map((i) => i.photo).toList());
             return Padding(
-              padding: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.only(bottom: 2),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: children,
+                children: [
+                  for (var j = 0; j < row.items.length; j++) ...[
+                    if (j > 0) SizedBox(width: spacing),
+                    SizedBox(
+                      width: row.items[j].width,
+                      height: row.height,
+                      child: RepaintBoundary(
+                        child: _PhotoTile(
+                          photo: row.items[j].photo,
+                          index: index * 10 + j,
+                          selected: widget.selectedPaths
+                              .contains(row.items[j].photo.path),
+                          thumbPath: provider
+                              .thumbPathOrNull(row.items[j].photo),
+                          onTap: widget.onPhotoTap,
+                          onLongPress: widget.onPhotoLongPress,
+                          viewerPhotos: widget.viewerPhotos,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             );
           },
@@ -323,6 +356,18 @@ class _PhotoGridState extends State<PhotoGrid> {
       ),
     );
   }
+}
+
+class _JustifiedRow {
+  final List<_RowItem> items;
+  final double height;
+  const _JustifiedRow({required this.items, required this.height});
+}
+
+class _RowItem {
+  final PhotoItem photo;
+  final double width;
+  const _RowItem({required this.photo, required this.width});
 }
 
 class _DateHeader extends StatelessWidget {
@@ -350,7 +395,6 @@ class _PhotoTile extends StatelessWidget {
   final PhotoItem photo;
   final int index;
   final bool selected;
-  final int cacheWidth;
   final String? thumbPath;
   final ValueChanged<PhotoItem>? onTap;
   final ValueChanged<PhotoItem>? onLongPress;
@@ -360,7 +404,6 @@ class _PhotoTile extends StatelessWidget {
     required this.photo,
     required this.index,
     this.selected = false,
-    this.cacheWidth = 200,
     this.thumbPath,
     this.onTap,
     this.onLongPress,
@@ -373,13 +416,12 @@ class _PhotoTile extends StatelessWidget {
       onTap: () => onTap != null ? onTap!(photo) : _openViewer(context),
       onLongPress: () => onLongPress?.call(photo),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(4),
         child: Stack(
           fit: StackFit.expand,
           children: [
             _Thumbnail(
               photo: photo,
-              cacheWidth: cacheWidth,
               thumbPath: thumbPath,
             ),
             if (selected)
@@ -397,36 +439,41 @@ class _PhotoTile extends StatelessWidget {
               ),
             if (photo.isFavorite && !selected)
               const Positioned(
-                top: 6,
-                right: 6,
-                child: Icon(Icons.favorite, color: Colors.redAccent, size: 18),
+                top: 4,
+                right: 4,
+                child: Icon(Icons.favorite, color: Colors.redAccent, size: 16),
               ),
             if (photo.isVideo)
               Positioned(
-                bottom: 4,
-                left: 4,
+                bottom: 3,
+                left: 3,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.65),
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(3),
                   ),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.play_arrow, color: Colors.white, size: 14),
-                      SizedBox(width: 2),
-                      Text('VIDEO', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600)),
+                      Icon(Icons.play_arrow, color: Colors.white, size: 12),
+                      SizedBox(width: 1),
+                      Text('VIDEO',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 8,
+                              fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
               ),
             if (selected)
               Positioned(
-                top: 6,
-                right: 6,
+                top: 4,
+                right: 4,
                 child: Icon(Icons.check_circle,
-                    color: Theme.of(context).colorScheme.primary, size: 22),
+                    color: Theme.of(context).colorScheme.primary, size: 20),
               ),
           ],
         ),
@@ -442,10 +489,8 @@ class _PhotoTile extends StatelessWidget {
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PhotoViewerScreen(
-          photos: source,
-          initialIndex: startIndex,
-        ),
+        builder: (_) =>
+            PhotoViewerScreen(photos: source, initialIndex: startIndex),
       ),
     );
   }
@@ -453,17 +498,18 @@ class _PhotoTile extends StatelessWidget {
 
 class _Thumbnail extends StatelessWidget {
   final PhotoItem photo;
-  final int cacheWidth;
   final String? thumbPath;
 
   const _Thumbnail({
     required this.photo,
-    this.cacheWidth = 200,
     this.thumbPath,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Consistent cacheWidth across all zoom levels to prevent re-decode.
+    const gridCacheWidth = 200;
+
     if (photo.isVideo) {
       if (thumbPath != null) {
         return Image.file(
@@ -471,11 +517,11 @@ class _Thumbnail extends StatelessWidget {
           fit: BoxFit.cover,
           alignment: Alignment.center,
           filterQuality: FilterQuality.low,
-          cacheWidth: cacheWidth,
-          errorBuilder: (context, error, stack) => _videoPlaceholder(),
+          cacheWidth: gridCacheWidth,
+          errorBuilder: (context, error, stack) => _placeholder(),
         );
       }
-      return _videoPlaceholder();
+      return _placeholder();
     }
 
     if (thumbPath != null) {
@@ -484,20 +530,20 @@ class _Thumbnail extends StatelessWidget {
         fit: BoxFit.cover,
         alignment: Alignment.center,
         filterQuality: FilterQuality.low,
-        cacheWidth: cacheWidth,
-        errorBuilder: (context, error, stack) => _fallbackFull(context),
+        cacheWidth: gridCacheWidth,
+        errorBuilder: (context, error, stack) => _fallback(context),
       );
     }
 
-    return _fallbackFull(context);
+    return _fallback(context);
   }
 
-  Widget _fallbackFull(BuildContext context) {
+  Widget _fallback(BuildContext context) {
     return Image.file(
       File(photo.path),
       fit: BoxFit.cover,
       alignment: Alignment.center,
-      cacheWidth: cacheWidth,
+      cacheWidth: 200,
       filterQuality: FilterQuality.low,
       frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
         if (wasSynchronouslyLoaded || frame != null) return child;
@@ -507,17 +553,17 @@ class _Thumbnail extends StatelessWidget {
         color: Color(0xFF333333),
         child: Center(
           child: Icon(Icons.broken_image_outlined,
-              color: Colors.white54, size: 32),
+              color: Colors.white54, size: 28),
         ),
       ),
     );
   }
 
-  Widget _videoPlaceholder() {
+  Widget _placeholder() {
     return const ColoredBox(
       color: Color(0xFF1B1B1F),
       child: Center(
-        child: Icon(Icons.play_circle_outline, color: Colors.white70, size: 24),
+        child: Icon(Icons.play_circle_outline, color: Colors.white70, size: 20),
       ),
     );
   }
