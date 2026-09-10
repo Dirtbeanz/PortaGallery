@@ -47,6 +47,8 @@ class ThumbnailService {
     final target = await expectedPath(photo);
     if (await File(target).exists()) return true;
     try {
+      // Skip very large files (>50MB) — they cause OOM during decode.
+      if (photo.sizeBytes > 50 * 1024 * 1024) return false;
       if (photo.isVideo) {
         return _videoFrame(photo, target);
       } else {
@@ -62,7 +64,7 @@ class ThumbnailService {
       final bytes = await File(photo.path).readAsBytes();
       final codec = await ui.instantiateImageCodec(
         bytes,
-        targetWidth: 250,
+        targetWidth: 150,
         allowUpscaling: false,
       );
       try {
@@ -112,8 +114,8 @@ class ThumbnailService {
         target,
         format: CompressFormat.jpeg,
         quality: 70,
-        minWidth: 250,
-        minHeight: 250,
+        minWidth: 150,
+        minHeight: 150,
       );
       if (result != null && await File(result.path).exists()) return true;
     } catch (_) {}
@@ -130,7 +132,7 @@ class ThumbnailService {
                 '$source[0]',
                 '-auto-orient',
                 '-thumbnail',
-                '250x250>',
+                '150x150>',
                 '-quality',
                 '70',
                 target,
@@ -151,7 +153,7 @@ class ThumbnailService {
       final data = await VideoThumbnail.thumbnailData(
         video: photo.path,
         imageFormat: ImageFormat.JPEG,
-        maxWidth: 250,
+        maxWidth: 150,
         quality: 70,
         timeMs: 1000,
       );
@@ -166,7 +168,7 @@ class ThumbnailService {
         '-ss', '1',
         '-i', photo.path,
         '-frames:v', '1',
-        '-vf', 'scale=250:-2',
+        '-vf', 'scale=150:-2',
         '-q:v', '5',
         '-y',
         target,

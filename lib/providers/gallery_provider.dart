@@ -210,10 +210,12 @@ class GalleryProvider extends ChangeNotifier {
       if (_thumbPaths.containsKey(photo.path)) continue;
       if (_thumbPending.contains(photo.path)) continue;
       if (_thumbInFlight.contains(photo.path)) continue;
+      // Cap pending queue to prevent unbounded growth with 18k items.
+      if (_thumbPending.length > 200) break;
       _thumbPending.add(photo.path);
       added = true;
     }
-    if (added) {
+    if (added && !_thumbing) {
       _drainThumbQueue();
     }
   }
@@ -223,12 +225,11 @@ class GalleryProvider extends ChangeNotifier {
     _thumbing = true;
     var changed = 0;
     var generated = 0;
-    const maxPerCycle = 50; // Limit per drain cycle to prevent memory pressure.
+    const maxPerCycle = 20;
     try {
       while (_thumbPending.isNotEmpty && generated < maxPerCycle) {
-        // Collect a batch of pending paths.
         final batch = <String>[];
-        while (batch.length < 3 && _thumbPending.isNotEmpty) {
+        while (batch.length < 2 && _thumbPending.isNotEmpty) {
           final path = _thumbPending.first;
           _thumbPending.remove(path);
           final photo = _photoIndex[path];
@@ -238,7 +239,6 @@ class GalleryProvider extends ChangeNotifier {
         }
         if (batch.isEmpty) continue;
 
-        // Generate thumbnails in parallel.
         final results = await Future.wait(batch.map((path) async {
           final photo = _photoIndex[path]!;
           try {
@@ -256,6 +256,8 @@ class GalleryProvider extends ChangeNotifier {
                 return (path: path, target: target);
               }
             }
+          } catch (_) {
+            // Don't let one bad file crash the whole queue.
           } finally {
             _thumbInFlight.remove(path);
           }
@@ -270,8 +272,7 @@ class GalleryProvider extends ChangeNotifier {
           }
         }
 
-        // Batch notifications to avoid re-laying out the grid on every thumbnail.
-        if (changed >= 12) {
+        if (changed >= 8) {
           notifyListeners();
           changed = 0;
         }
@@ -282,9 +283,11 @@ class GalleryProvider extends ChangeNotifier {
     } finally {
       _thumbing = false;
       if (changed > 0) notifyListeners();
-      // If there are still pending items, schedule another cycle.
+      // If there are still pending items, schedule another cycle with a delay.
       if (_thumbPending.isNotEmpty) {
-        Future.delayed(const Duration(milliseconds: 100), _drainThumbQueue);
+        Future.delayed(const Duration(milliseconds: 200), () {
+          if (!_thumbing) _drainThumbQueue();
+        });
       }
     }
   }

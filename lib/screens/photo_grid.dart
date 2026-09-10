@@ -164,16 +164,17 @@ class _PhotoGridState extends State<PhotoGrid> {
         const hPadding = 2.0;
         final width = constraints.maxWidth;
 
-        // Compute section starts for scroll indicator.
+        // Estimate section starts using average row height (don't compute exact rows).
         _sectionStarts = [];
         var acc = 0.0;
+        final rowHeight = _rowHeight(width);
+        final availableWidth = width - hPadding * 2;
+        final avgPhotosPerRow = (availableWidth / rowHeight).clamp(1.0, 20.0);
         for (final section in widget.sections) {
           _sectionStarts.add(acc);
           acc += 46; // header
-          final rows = _buildRows(section.photos, width, hPadding, spacing);
-          for (final row in rows) {
-            acc += row.height + spacing;
-          }
+          final rows = (section.photos.length / avgPhotosPerRow).ceil();
+          acc += rows * (rowHeight + spacing);
         }
 
         if (_pendingAnchor != null) {
