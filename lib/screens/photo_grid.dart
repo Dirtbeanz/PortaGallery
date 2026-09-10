@@ -15,6 +15,7 @@ class PhotoGrid extends StatefulWidget {
   final Set<String> selectedPaths;
   final int columns;
   final bool squareTiles;
+  final bool masonry;
   final List<PhotoItem>? viewerPhotos;
   final ValueChanged<PhotoItem>? onPhotoTap;
   final ValueChanged<PhotoItem>? onPhotoLongPress;
@@ -24,6 +25,7 @@ class PhotoGrid extends StatefulWidget {
     required this.sections,
     required this.columns,
     required this.squareTiles,
+    this.masonry = false,
     this.selectedPaths = const {},
     this.viewerPhotos,
     this.onPhotoTap,
@@ -53,7 +55,8 @@ class _PhotoGridState extends State<PhotoGrid> {
   void didUpdateWidget(PhotoGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.columns != widget.columns ||
-        oldWidget.squareTiles != widget.squareTiles) {
+        oldWidget.squareTiles != widget.squareTiles ||
+        oldWidget.masonry != widget.masonry) {
       _captureAnchor(oldWidget);
     }
   }
@@ -199,14 +202,24 @@ class _PhotoGridState extends State<PhotoGrid> {
                   for (final section in widget.sections) ...[
                     SliverToBoxAdapter(
                         child: _DateHeader(label: section.header)),
-                    _buildSection(
-                      context,
-                      section.photos,
-                      tileWidth,
-                      colCount,
-                      spacing,
-                      hPadding,
-                    ),
+                    if (widget.masonry)
+                      _buildMasonrySection(
+                        context,
+                        section.photos,
+                        tileWidth,
+                        colCount,
+                        spacing,
+                        hPadding,
+                      )
+                    else
+                      _buildSection(
+                        context,
+                        section.photos,
+                        tileWidth,
+                        colCount,
+                        spacing,
+                        hPadding,
+                      ),
                   ],
                 ],
               ),
@@ -318,6 +331,86 @@ class _PhotoGridState extends State<PhotoGrid> {
             );
           },
           childCount: rows.length,
+          addAutomaticKeepAlives: false,
+        ),
+      ),
+    );
+  }
+
+  /// Masonry layout: each photo displayed at full aspect ratio, placed in
+  /// the shortest column to create a natural waterfall effect.
+  Widget _buildMasonrySection(
+    BuildContext context,
+    List<PhotoItem> photos,
+    double tileWidth,
+    int colCount,
+    double spacing,
+    double hPadding,
+  ) {
+    final provider = context.read<GalleryProvider>();
+    provider.requestThumbnails(photos);
+
+    // Build columns: each column is a list of (photo, height) pairs.
+    final columns = List.generate(colCount, (_) => <({PhotoItem photo, double height})>[]);
+    final colHeights = List.filled(colCount, 0.0);
+
+    for (final photo in photos) {
+      final ratio = provider.getAspectRatio(photo);
+      final height = tileWidth / ratio;
+      // Place in shortest column.
+      var minIdx = 0;
+      for (var i = 1; i < colCount; i++) {
+        if (colHeights[i] < colHeights[minIdx]) minIdx = i;
+      }
+      columns[minIdx].add((photo: photo, height: height));
+      colHeights[minIdx] += height + spacing;
+    }
+
+    // Find max rows across all columns.
+    final maxRows = columns.fold<int>(0, (max, col) => math.max(max, col.length));
+
+    return SliverPadding(
+      padding: EdgeInsets.symmetric(horizontal: hPadding),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, rowIndex) {
+            if (rowIndex >= maxRows) return null;
+            final children = <Widget>[];
+            for (var c = 0; c < colCount; c++) {
+              if (c > 0) children.add(SizedBox(width: spacing));
+              final col = columns[c];
+              if (rowIndex < col.length) {
+                final item = col[rowIndex];
+                final globalIndex = photos.indexOf(item.photo);
+                children.add(SizedBox(
+                  width: tileWidth,
+                  height: item.height,
+                  child: RepaintBoundary(
+                    child: _PhotoTile(
+                      photo: item.photo,
+                      index: globalIndex,
+                      selected: widget.selectedPaths.contains(item.photo.path),
+                      cacheWidth: 800,
+                      thumbPath: provider.thumbPathOrNull(item.photo),
+                      onTap: widget.onPhotoTap,
+                      onLongPress: widget.onPhotoLongPress,
+                      viewerPhotos: widget.viewerPhotos,
+                    ),
+                  ),
+                ));
+              } else {
+                children.add(SizedBox(width: tileWidth));
+              }
+            }
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: children,
+              ),
+            );
+          },
+          childCount: maxRows,
           addAutomaticKeepAlives: false,
         ),
       ),
@@ -472,6 +565,7 @@ class _Thumbnail extends StatelessWidget {
         return Image.file(
           File(thumbPath!),
           fit: BoxFit.cover,
+          alignment: Alignment.center,
           filterQuality: FilterQuality.low,
           errorBuilder: (context, error, stack) => _videoPlaceholder(),
         );
@@ -483,6 +577,7 @@ class _Thumbnail extends StatelessWidget {
       return Image.file(
         File(thumbPath!),
         fit: BoxFit.cover,
+        alignment: Alignment.center,
         filterQuality: FilterQuality.low,
         errorBuilder: (context, error, stack) => _fallbackFull(context),
       );
@@ -495,6 +590,7 @@ class _Thumbnail extends StatelessWidget {
     return Image.file(
       File(photo.path),
       fit: BoxFit.cover,
+      alignment: Alignment.center,
       cacheWidth: cacheWidth,
       filterQuality: FilterQuality.low,
       frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {

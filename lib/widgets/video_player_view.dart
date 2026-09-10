@@ -23,7 +23,7 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
     _player,
     configuration: Platform.isLinux
         ? const VideoControllerConfiguration(
-            hwdec: 'no',
+            hwdec: 'auto-safe',
           )
         : const VideoControllerConfiguration(
             hwdec: 'auto-safe',

@@ -62,7 +62,7 @@ class ThumbnailService {
       final bytes = await File(photo.path).readAsBytes();
       final codec = await ui.instantiateImageCodec(
         bytes,
-        targetWidth: 640,
+        targetWidth: 320,
         allowUpscaling: false,
       );
       try {
@@ -78,8 +78,7 @@ class ThumbnailService {
 
         // Flutter's codec already applies EXIF orientation — the decoded
         // RGBA pixels have the correct display orientation, so no manual
-        // rotation is needed.  Double-rotating was the root cause of
-        // portrait photos appearing landscape (squished) in the grid.
+        // rotation is needed.
         final encoded = await Isolate.run(() {
           final decoded = img.Image.fromBytes(
             width: w,
@@ -87,7 +86,7 @@ class ThumbnailService {
             bytes: buf,
             order: img.ChannelOrder.rgba,
           );
-          return Uint8List.fromList(img.encodeJpg(decoded, quality: 82));
+          return Uint8List.fromList(img.encodeJpg(decoded, quality: 70));
         });
 
         await File(target).writeAsBytes(encoded, flush: true);
@@ -112,9 +111,9 @@ class ThumbnailService {
         source,
         target,
         format: CompressFormat.jpeg,
-        quality: 82,
-        minWidth: 640,
-        minHeight: 640,
+        quality: 70,
+        minWidth: 320,
+        minHeight: 320,
       );
       if (result != null && await File(result.path).exists()) return true;
     } catch (_) {}
@@ -131,9 +130,9 @@ class ThumbnailService {
                 '$source[0]',
                 '-auto-orient',
                 '-thumbnail',
-                '640x640>',
+                '320x320>',
                 '-quality',
-                '82',
+                '70',
                 target,
               ];
         final result = await Process.run(exe, args);
@@ -152,8 +151,8 @@ class ThumbnailService {
       final data = await VideoThumbnail.thumbnailData(
         video: photo.path,
         imageFormat: ImageFormat.JPEG,
-        maxWidth: 640,
-        quality: 75,
+        maxWidth: 320,
+        quality: 70,
         timeMs: 1000,
       );
       if (data == null || data.isEmpty) return false;
@@ -167,7 +166,7 @@ class ThumbnailService {
         '-ss', '1',
         '-i', photo.path,
         '-frames:v', '1',
-        '-vf', 'scale=640:-2',
+        '-vf', 'scale=320:-2',
         '-q:v', '5',
         '-y',
         target,

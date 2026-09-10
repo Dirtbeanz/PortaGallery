@@ -4,6 +4,7 @@ class PhotoItem {
   final String album;
   final int sizeBytes;
   final DateTime modifiedAt;
+  final DateTime? dateTaken;
   final bool isVideo;
   bool isFavorite;
   double aspectRatio;
@@ -14,6 +15,7 @@ class PhotoItem {
     required this.album,
     required this.sizeBytes,
     required this.modifiedAt,
+    this.dateTaken,
     required this.isVideo,
     this.isFavorite = false,
     this.aspectRatio = 1.0,
@@ -42,20 +44,28 @@ class PhotoItem {
         'album': album,
         'sizeBytes': sizeBytes,
         'modifiedAt': modifiedAt.millisecondsSinceEpoch,
+        'dateTaken': dateTaken?.millisecondsSinceEpoch,
         'isVideo': isVideo ? 1 : 0,
         'isFavorite': isFavorite ? 1 : 0,
       };
 
-  factory PhotoItem.fromMap(Map<String, dynamic> map) => PhotoItem(
-        path: map['path'] as String,
-        name: map['name'] as String,
-        album: map['album'] as String,
-        sizeBytes: map['sizeBytes'] as int,
-        modifiedAt:
-            DateTime.fromMillisecondsSinceEpoch(map['modifiedAt'] as int),
-        isVideo: (map['isVideo'] as int) == 1,
-        isFavorite: (map['isFavorite'] as int) == 1,
-      );
+  factory PhotoItem.fromMap(Map<String, dynamic> map) {
+    final dtRaw = map['dateTaken'];
+    DateTime? dt;
+    if (dtRaw is int && dtRaw > 0) {
+      dt = DateTime.fromMillisecondsSinceEpoch(dtRaw);
+    }
+    return PhotoItem(
+      path: map['path'] as String,
+      name: map['name'] as String,
+      album: map['album'] as String,
+      sizeBytes: map['sizeBytes'] as int,
+      modifiedAt: DateTime.fromMillisecondsSinceEpoch(map['modifiedAt'] as int),
+      dateTaken: dt,
+      isVideo: (map['isVideo'] as int) == 1,
+      isFavorite: (map['isFavorite'] as int) == 1,
+    );
+  }
 }
 
 class Album {
@@ -72,7 +82,7 @@ class Album {
   });
 }
 
-enum SortField { name, dateModified, size }
+enum SortField { name, dateModified, dateTaken, size }
 
 enum SortOrder { ascending, descending }
 
@@ -85,7 +95,8 @@ class SortMode {
   String get label {
     final fieldName = switch (field) {
       SortField.name => 'Name',
-      SortField.dateModified => 'Date',
+      SortField.dateModified => 'Date modified',
+      SortField.dateTaken => 'Date taken',
       SortField.size => 'Size',
     };
     final orderName = order == SortOrder.ascending ? '↑' : '↓';

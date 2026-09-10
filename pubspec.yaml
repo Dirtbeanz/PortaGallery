@@ -1,7 +1,7 @@
 name: photo_gallery
 description: "PortaGallery - a modern photo gallery for external drives."
 publish_to: 'none'
-version: 1.5.1
+version: 1.6.0
 
 environment:
   sdk: ^3.7.2

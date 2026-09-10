@@ -344,6 +344,8 @@ class GalleryProvider extends ChangeNotifier {
       final compare = switch (sortMode.field) {
         SortField.name => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
         SortField.dateModified => a.modifiedAt.compareTo(b.modifiedAt),
+        SortField.dateTaken =>
+          (a.dateTaken ?? a.modifiedAt).compareTo(b.dateTaken ?? b.modifiedAt),
         SortField.size => a.sizeBytes.compareTo(b.sizeBytes),
       };
       return sortMode.order == SortOrder.ascending ? compare : -compare;
@@ -469,6 +471,7 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   bool get useSquareTiles => _zoomLevel < 4;
+  bool get useMasonry => _zoomLevel >= 4;
 
   Future<void> toggleFavorite(PhotoItem photo) async {
     final path = photo.path;

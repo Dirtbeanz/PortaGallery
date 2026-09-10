@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:exif/exif.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/photo_item.dart';
@@ -97,12 +98,18 @@ class PhotoService {
         final relative =
             parent == rootAbs ? '' : p.relative(parent, from: rootAbs);
 
+        DateTime? dateTaken;
+        if (!isVideoPath(file.path)) {
+          dateTaken = await _readExifDate(file.path);
+        }
+
         out.add(PhotoItem(
           path: file.path,
           name: p.basename(file.path),
           album: relative,
           sizeBytes: stat.size,
           modifiedAt: stat.modified,
+          dateTaken: dateTaken,
           isVideo: isVideoPath(file.path),
         ));
       }));
@@ -115,6 +122,21 @@ class PhotoService {
           i, i + dirBatchSize > subdirs.length ? subdirs.length : i + dirBatchSize);
       await Future.wait(
           batch.map((sub) => _scan(sub, out, rootAbs, showHidden: showHidden)));
+    }
+  }
+
+  static Future<DateTime?> _readExifDate(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return null;
+      final tags = await readExifFromFile(file);
+      final raw = tags['EXIF DateTimeOriginal']?.toString() ??
+          tags['Image DateTime']?.toString();
+      if (raw == null || raw.length < 10) return null;
+      final datePart = raw.substring(0, 10).replaceAll(':', '-');
+      return DateTime.tryParse('$datePart${raw.substring(10)}');
+    } catch (_) {
+      return null;
     }
   }
 
