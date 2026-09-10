@@ -98,9 +98,7 @@ class PhotoService {
             parent == rootAbs ? '' : p.relative(parent, from: rootAbs);
 
         DateTime? dateTaken;
-        if (!isVideoPath(file.path)) {
-          dateTaken = await readExifDateQuick(file.path);
-        }
+        // EXIF date reading deferred to background — not during scan.
 
         out.add(PhotoItem(
           path: file.path,

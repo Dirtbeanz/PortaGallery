@@ -62,7 +62,7 @@ class ThumbnailService {
       final bytes = await File(photo.path).readAsBytes();
       final codec = await ui.instantiateImageCodec(
         bytes,
-        targetWidth: 320,
+        targetWidth: 250,
         allowUpscaling: false,
       );
       try {
@@ -112,8 +112,8 @@ class ThumbnailService {
         target,
         format: CompressFormat.jpeg,
         quality: 70,
-        minWidth: 320,
-        minHeight: 320,
+        minWidth: 250,
+        minHeight: 250,
       );
       if (result != null && await File(result.path).exists()) return true;
     } catch (_) {}
@@ -130,7 +130,7 @@ class ThumbnailService {
                 '$source[0]',
                 '-auto-orient',
                 '-thumbnail',
-                '320x320>',
+                '250x250>',
                 '-quality',
                 '70',
                 target,
@@ -151,7 +151,7 @@ class ThumbnailService {
       final data = await VideoThumbnail.thumbnailData(
         video: photo.path,
         imageFormat: ImageFormat.JPEG,
-        maxWidth: 320,
+        maxWidth: 250,
         quality: 70,
         timeMs: 1000,
       );
@@ -166,7 +166,7 @@ class ThumbnailService {
         '-ss', '1',
         '-i', photo.path,
         '-frames:v', '1',
-        '-vf', 'scale=320:-2',
+        '-vf', 'scale=250:-2',
         '-q:v', '5',
         '-y',
         target,

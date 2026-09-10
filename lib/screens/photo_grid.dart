@@ -300,7 +300,7 @@ class _PhotoGridState extends State<PhotoGrid> {
                     photo: photo,
                     index: index * colCount + j,
                     selected: widget.selectedPaths.contains(photo.path),
-                    cacheWidth: widget.squareTiles ? 200 : 600,
+                    cacheWidth: widget.squareTiles ? 150 : 400,
                     thumbPath: provider.thumbPathOrNull(photo),
                     onTap: widget.onPhotoTap,
                     onLongPress: widget.onPhotoLongPress,

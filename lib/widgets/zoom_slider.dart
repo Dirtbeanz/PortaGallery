@@ -8,8 +8,6 @@ class ZoomSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final screenW = MediaQuery.of(context).size.width;
-    final sliderW = (screenW * 0.25).clamp(100.0, 220.0);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -19,19 +17,6 @@ class ZoomSlider extends StatelessWidget {
           constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
           padding: EdgeInsets.zero,
           onPressed: () => provider.setZoom(provider.zoomLevel - 1),
-        ),
-        SizedBox(
-          width: sliderW,
-          child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(trackHeight: 3),
-            child: Slider(
-              value: provider.zoomLevel.toDouble(),
-              min: 0,
-              max: 4,
-              divisions: 4,
-              onChanged: (v) => provider.setZoom(v.round()),
-            ),
-          ),
         ),
         IconButton(
           icon: const Icon(Icons.zoom_in, size: 18),

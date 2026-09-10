@@ -4,7 +4,7 @@ class PhotoItem {
   final String album;
   final int sizeBytes;
   final DateTime modifiedAt;
-  final DateTime? dateTaken;
+  DateTime? dateTaken;
   final bool isVideo;
   bool isFavorite;
   double aspectRatio;

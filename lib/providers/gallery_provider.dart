@@ -168,37 +168,40 @@ class GalleryProvider extends ChangeNotifier {
       isConfigured = true;
       // Persist scanned photos so next startup is instant.
       _database.savePhotoCache(scanned);
-      await _loadExistingThumbnails();
+      // Clear thumbnail state — they'll regenerate lazily as the user scrolls.
+      _thumbPaths = {};
+      _thumbPending.clear();
+      _thumbInFlight.clear();
+      _aspectRatios.clear();
     } finally {
       isLoading = false;
       notifyListeners();
     }
+
+    // Enrich EXIF dates in background (fire-and-forget).
+    _enrichExifDates();
   }
 
-  Future<void> _loadExistingThumbnails() async {
-    final dir = await ThumbnailService.cacheDir();
-    final map = <String, String>{};
-    const batchSize = 50;
+  Future<void> _enrichExifDates() async {
+    const batchSize = 16;
+    var changed = false;
     for (var i = 0; i < _photos.length; i += batchSize) {
       final end = i + batchSize > _photos.length ? _photos.length : i + batchSize;
       await Future.wait(_photos.sublist(i, end).map((photo) async {
-        final candidate =
-            p.join(dir.path, '${ThumbnailService.key(photo)}.jpg');
-        if (await File(candidate).exists()) {
-          map[photo.path] = candidate;
-          final dims = PhotoService.readDimensions(candidate);
-          if (dims != null && dims.$2 > 0) {
-            final ratio = dims.$1 / dims.$2;
-            _aspectRatios[photo.path] = ratio;
-            photo.aspectRatio = ratio;
-          }
+        if (photo.isVideo || photo.dateTaken != null) return;
+        final date = await PhotoService.readExifDateQuick(photo.path);
+        if (date != null) {
+          photo.dateTaken = date;
+          changed = true;
         }
       }));
-      // Yield to the event loop so the UI stays responsive.
+      // Yield to keep UI responsive.
       await Future<void>.delayed(Duration.zero);
     }
-    _thumbPaths = map;
-    _thumbPending.clear();
+    if (changed) {
+      _sectionsDirty = true;
+      notifyListeners();
+    }
   }
 
   void requestThumbnails(List<PhotoItem> photos) {
