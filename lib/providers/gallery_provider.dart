@@ -43,7 +43,7 @@ class GalleryProvider extends ChangeNotifier {
   bool isLoading = false;
   bool showFavoritesOnly = false;
   String searchQuery = '';
-  int _zoomLevel = 2;
+  int _zoomLevel = 1;
   int get zoomLevel => _zoomLevel;
   final Map<String, double> _aspectRatios = {};
   Map<String, double> get aspectRatios => _aspectRatios;
@@ -367,7 +367,7 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   void setZoom(int level) {
-    _zoomLevel = level.clamp(0, 3);
+    _zoomLevel = level.clamp(0, 4);
     _sectionsDirty = true;
     notifyListeners();
   }
@@ -453,20 +453,22 @@ class GalleryProvider extends ChangeNotifier {
   String _pad(int n) => n.toString().padLeft(2, '0');
 
   int columnsForZoom(double screenWidth) {
+    final wide = screenWidth > 600;
     switch (_zoomLevel) {
       case 0:
-        return 8;
+        return wide ? 10 : 7;
       case 1:
-        return 5;
+        return 8;
       case 2:
-        return 4;
+        return wide ? 5 : 4;
+      case 3:
+        return 3;
       default:
-        if (screenWidth > 600) return 3;
-        return 2;
+        return wide ? 3 : 2;
     }
   }
 
-  bool get useSquareTiles => _zoomLevel < 3;
+  bool get useSquareTiles => _zoomLevel < 4;
 
   Future<void> toggleFavorite(PhotoItem photo) async {
     final path = photo.path;

@@ -9,7 +9,7 @@ class ZoomSlider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
-    final sliderW = (screenW * 0.22).clamp(80.0, 220.0);
+    final sliderW = (screenW * 0.30).clamp(120.0, 240.0);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -27,8 +27,8 @@ class ZoomSlider extends StatelessWidget {
             child: Slider(
               value: provider.zoomLevel.toDouble(),
               min: 0,
-              max: 3,
-              divisions: 3,
+              max: 4,
+              divisions: 4,
               onChanged: (v) => provider.setZoom(v.round()),
             ),
           ),

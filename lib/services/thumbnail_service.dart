@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:ui' as ui;
@@ -10,7 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 import '../models/photo_item.dart';
-import 'photo_service.dart';
+
 
 class ThumbnailService {
   static Directory? _dir;
@@ -47,13 +48,10 @@ class ThumbnailService {
     if (await File(target).exists()) return true;
     try {
       if (photo.isVideo) {
-        final ok = await _videoFrame(photo, target);
-        if (!ok) return false;
+        return _videoFrame(photo, target);
       } else {
-        final ok = await _imageThumb(photo, target);
-        if (!ok) return false;
+        return _imageThumb(photo, target);
       }
-      return true;
     } catch (_) {
       return false;
     }
@@ -70,24 +68,27 @@ class ThumbnailService {
       );
       try {
         final frame = await codec.getNextFrame();
-        final width = frame.image.width;
-        final height = frame.image.height;
-        final data = await frame.image.toByteData(
+        final w = frame.image.width;
+        final h = frame.image.height;
+        final rgba = await frame.image.toByteData(
           format: ui.ImageByteFormat.rawRgba,
         );
         frame.image.dispose();
-        if (data == null) return false;
-        final buffer = data.buffer;
+        if (rgba == null) return false;
+        final buf = rgba.buffer;
 
+        // Flutter's codec already applies EXIF orientation — the decoded
+        // RGBA pixels have the correct display orientation, so no manual
+        // rotation is needed.  Double-rotating was the root cause of
+        // portrait photos appearing landscape (squished) in the grid.
         final encoded = await Isolate.run(() {
-          final img.Image decoded = img.Image.fromBytes(
-            width: width,
-            height: height,
-            bytes: buffer,
+          final decoded = img.Image.fromBytes(
+            width: w,
+            height: h,
+            bytes: buf,
             order: img.ChannelOrder.rgba,
           );
-          return Uint8List.fromList(
-              img.encodeJpg(decoded, quality: 82));
+          return Uint8List.fromList(img.encodeJpg(decoded, quality: 82));
         });
 
         await File(target).writeAsBytes(encoded, flush: true);
@@ -96,11 +97,8 @@ class ThumbnailService {
         codec.dispose();
       }
     } catch (_) {
-      // Flutter's codec can't decode RAW/HEIC formats; fall back to platform
-      // codecs (Android) or ImageMagick/heif-convert (Linux).
-      if (PhotoService.isRawPath(photo.path)) {
-        return _magickThumb(photo.path, target);
-      }
+      // Flutter's codec can't decode RAW/HEIC; fall back to platform codecs
+      // or system tools.
       if (!kIsWeb && Platform.isAndroid) {
         final ok = await _compressPlatform(photo.path, target);
         if (ok) return true;

@@ -23,11 +23,7 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
     _player,
     configuration: Platform.isLinux
         ? const VideoControllerConfiguration(
-            // Force software decode + software render on Linux to avoid
-            // broken VAAPI (no intel-media-driver) and flaky Wayland GL
-            // textures. Uses mpv's pixel-buffer path.
             hwdec: 'no',
-            enableHardwareAcceleration: false,
           )
         : const VideoControllerConfiguration(
             hwdec: 'auto-safe',
