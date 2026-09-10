@@ -223,7 +223,7 @@ class GalleryProvider extends ChangeNotifier {
       while (_thumbPending.isNotEmpty) {
         // Collect a batch of pending paths.
         final batch = <String>[];
-        while (batch.length < 6 && _thumbPending.isNotEmpty) {
+        while (batch.length < 3 && _thumbPending.isNotEmpty) {
           final path = _thumbPending.first;
           _thumbPending.remove(path);
           final photo = _photoIndex[path];
@@ -471,7 +471,6 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   bool get useSquareTiles => _zoomLevel < 4;
-  bool get useMasonry => _zoomLevel >= 4;
 
   Future<void> toggleFavorite(PhotoItem photo) async {
     final path = photo.path;

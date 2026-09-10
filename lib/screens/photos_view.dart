@@ -32,7 +32,6 @@ class _PhotosViewState extends State<PhotosView> {
     final columns = provider.columnsForZoom(
         MediaQuery.of(context).size.width);
     final squareTiles = provider.useSquareTiles;
-    final masonry = provider.useMasonry;
 
     return Column(
       children: [
@@ -48,7 +47,6 @@ class _PhotosViewState extends State<PhotosView> {
             sections: sections,
             columns: columns,
             squareTiles: squareTiles,
-            masonry: masonry,
             selectedPaths: _selected,
             onPhotoTap: _selectionMode ? _toggleSelect : _openViewer,
             onPhotoLongPress: _enterSelection,

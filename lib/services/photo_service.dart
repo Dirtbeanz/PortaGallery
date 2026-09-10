@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:exif/exif.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/photo_item.dart';
@@ -100,7 +99,7 @@ class PhotoService {
 
         DateTime? dateTaken;
         if (!isVideoPath(file.path)) {
-          dateTaken = await _readExifDate(file.path);
+          dateTaken = await readExifDateQuick(file.path);
         }
 
         out.add(PhotoItem(
@@ -125,16 +124,62 @@ class PhotoService {
     }
   }
 
-  static Future<DateTime?> _readExifDate(String path) async {
+  /// Lightweight EXIF date reader — only reads first 64KB of the file.
+  /// Much faster than the full `exif` package which reads the entire file.
+  static Future<DateTime?> readExifDateQuick(String path) async {
     try {
       final file = File(path);
-      if (!await file.exists()) return null;
-      final tags = await readExifFromFile(file);
-      final raw = tags['EXIF DateTimeOriginal']?.toString() ??
-          tags['Image DateTime']?.toString();
-      if (raw == null || raw.length < 10) return null;
-      final datePart = raw.substring(0, 10).replaceAll(':', '-');
-      return DateTime.tryParse('$datePart${raw.substring(10)}');
+      final raf = await file.open();
+      final header = await raf.read(65536);
+      await raf.close();
+
+      if (header.length < 12) return null;
+      // Only works for JPEG (starts with FF D8).
+      if (header[0] != 0xFF || header[1] != 0xD8) return null;
+
+      var off = 2;
+      while (off + 9 < header.length) {
+        if (header[off] != 0xFF) { off++; continue; }
+        final marker = header[off + 1];
+        if (marker == 0xD8 || marker == 0xD9) { off += 2; continue; }
+        if (marker >= 0xD0 && marker <= 0xDA) { off += 2; continue; }
+        if (off + 3 >= header.length) break;
+        final len = (header[off + 2] << 8) + header[off + 3];
+        if (len < 2) break;
+
+        // APP1 (EXIF) marker.
+        if (marker == 0xE1) {
+          final exifDate = _parseExifDate(header, off + 4, len - 2);
+          if (exifDate != null) return exifDate;
+        }
+        off += 2 + len;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static DateTime? _parseExifDate(List<int> data, int start, int length) {
+    try {
+      // Look for "DateTimeOriginal" (tag 0x9003) or "DateTime" (tag 0x0132)
+      // in the EXIF IFD. We do a byte scan for the ASCII date pattern
+      // "YYYY:MM:DD HH:MM:SS" which is always present in these tags.
+      final end = start + length;
+      for (var i = start; i < end - 19; i++) {
+        // Check for "20" prefix (years 2000-2099) followed by ":MM:DD"
+        if (data[i] == 0x32 && data[i + 1] == 0x30 && // "20"
+            data[i + 4] == 0x3A && data[i + 7] == 0x3A && // "::"
+            data[i + 10] == 0x20 && data[i + 13] == 0x3A && data[i + 16] == 0x3A) {
+          final str = String.fromCharCodes(data.sublist(i, i + 19));
+          final datePart = str.substring(0, 10).replaceAll(':', '-');
+          final result = DateTime.tryParse('$datePart${str.substring(10)}');
+          if (result != null && result.year > 1990 && result.year < 2100) {
+            return result;
+          }
+        }
+      }
+      return null;
     } catch (_) {
       return null;
     }

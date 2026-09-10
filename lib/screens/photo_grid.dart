@@ -15,7 +15,6 @@ class PhotoGrid extends StatefulWidget {
   final Set<String> selectedPaths;
   final int columns;
   final bool squareTiles;
-  final bool masonry;
   final List<PhotoItem>? viewerPhotos;
   final ValueChanged<PhotoItem>? onPhotoTap;
   final ValueChanged<PhotoItem>? onPhotoLongPress;
@@ -25,7 +24,6 @@ class PhotoGrid extends StatefulWidget {
     required this.sections,
     required this.columns,
     required this.squareTiles,
-    this.masonry = false,
     this.selectedPaths = const {},
     this.viewerPhotos,
     this.onPhotoTap,
@@ -55,8 +53,7 @@ class _PhotoGridState extends State<PhotoGrid> {
   void didUpdateWidget(PhotoGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.columns != widget.columns ||
-        oldWidget.squareTiles != widget.squareTiles ||
-        oldWidget.masonry != widget.masonry) {
+        oldWidget.squareTiles != widget.squareTiles) {
       _captureAnchor(oldWidget);
     }
   }
@@ -202,24 +199,14 @@ class _PhotoGridState extends State<PhotoGrid> {
                   for (final section in widget.sections) ...[
                     SliverToBoxAdapter(
                         child: _DateHeader(label: section.header)),
-                    if (widget.masonry)
-                      _buildMasonrySection(
-                        context,
-                        section.photos,
-                        tileWidth,
-                        colCount,
-                        spacing,
-                        hPadding,
-                      )
-                    else
-                      _buildSection(
-                        context,
-                        section.photos,
-                        tileWidth,
-                        colCount,
-                        spacing,
-                        hPadding,
-                      ),
+                    _buildSection(
+                      context,
+                      section.photos,
+                      tileWidth,
+                      colCount,
+                      spacing,
+                      hPadding,
+                    ),
                   ],
                 ],
               ),
@@ -313,7 +300,7 @@ class _PhotoGridState extends State<PhotoGrid> {
                     photo: photo,
                     index: index * colCount + j,
                     selected: widget.selectedPaths.contains(photo.path),
-                    cacheWidth: widget.squareTiles ? 400 : 1000,
+                    cacheWidth: widget.squareTiles ? 200 : 600,
                     thumbPath: provider.thumbPathOrNull(photo),
                     onTap: widget.onPhotoTap,
                     onLongPress: widget.onPhotoLongPress,
@@ -331,86 +318,6 @@ class _PhotoGridState extends State<PhotoGrid> {
             );
           },
           childCount: rows.length,
-          addAutomaticKeepAlives: false,
-        ),
-      ),
-    );
-  }
-
-  /// Masonry layout: each photo displayed at full aspect ratio, placed in
-  /// the shortest column to create a natural waterfall effect.
-  Widget _buildMasonrySection(
-    BuildContext context,
-    List<PhotoItem> photos,
-    double tileWidth,
-    int colCount,
-    double spacing,
-    double hPadding,
-  ) {
-    final provider = context.read<GalleryProvider>();
-    provider.requestThumbnails(photos);
-
-    // Build columns: each column is a list of (photo, height) pairs.
-    final columns = List.generate(colCount, (_) => <({PhotoItem photo, double height})>[]);
-    final colHeights = List.filled(colCount, 0.0);
-
-    for (final photo in photos) {
-      final ratio = provider.getAspectRatio(photo);
-      final height = tileWidth / ratio;
-      // Place in shortest column.
-      var minIdx = 0;
-      for (var i = 1; i < colCount; i++) {
-        if (colHeights[i] < colHeights[minIdx]) minIdx = i;
-      }
-      columns[minIdx].add((photo: photo, height: height));
-      colHeights[minIdx] += height + spacing;
-    }
-
-    // Find max rows across all columns.
-    final maxRows = columns.fold<int>(0, (max, col) => math.max(max, col.length));
-
-    return SliverPadding(
-      padding: EdgeInsets.symmetric(horizontal: hPadding),
-      sliver: SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (context, rowIndex) {
-            if (rowIndex >= maxRows) return null;
-            final children = <Widget>[];
-            for (var c = 0; c < colCount; c++) {
-              if (c > 0) children.add(SizedBox(width: spacing));
-              final col = columns[c];
-              if (rowIndex < col.length) {
-                final item = col[rowIndex];
-                final globalIndex = photos.indexOf(item.photo);
-                children.add(SizedBox(
-                  width: tileWidth,
-                  height: item.height,
-                  child: RepaintBoundary(
-                    child: _PhotoTile(
-                      photo: item.photo,
-                      index: globalIndex,
-                      selected: widget.selectedPaths.contains(item.photo.path),
-                      cacheWidth: 800,
-                      thumbPath: provider.thumbPathOrNull(item.photo),
-                      onTap: widget.onPhotoTap,
-                      onLongPress: widget.onPhotoLongPress,
-                      viewerPhotos: widget.viewerPhotos,
-                    ),
-                  ),
-                ));
-              } else {
-                children.add(SizedBox(width: tileWidth));
-              }
-            }
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: children,
-              ),
-            );
-          },
-          childCount: maxRows,
           addAutomaticKeepAlives: false,
         ),
       ),
@@ -453,7 +360,7 @@ class _PhotoTile extends StatelessWidget {
     required this.photo,
     required this.index,
     this.selected = false,
-    this.cacheWidth = 400,
+    this.cacheWidth = 200,
     this.thumbPath,
     this.onTap,
     this.onLongPress,
@@ -462,69 +369,66 @@ class _PhotoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Hero(
-      tag: 'photo_${photo.path}_$index',
-      child: GestureDetector(
-        onTap: () => onTap != null ? onTap!(photo) : _openViewer(context),
-        onLongPress: () => onLongPress?.call(photo),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              _Thumbnail(
-                photo: photo,
-                cacheWidth: cacheWidth,
-                thumbPath: thumbPath,
+    return GestureDetector(
+      onTap: () => onTap != null ? onTap!(photo) : _openViewer(context),
+      onLongPress: () => onLongPress?.call(photo),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _Thumbnail(
+              photo: photo,
+              cacheWidth: cacheWidth,
+              thumbPath: thumbPath,
+            ),
+            if (selected)
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 3,
+                  ),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.25),
+                ),
               ),
-              if (selected)
-                Container(
+            if (photo.isFavorite && !selected)
+              const Positioned(
+                top: 6,
+                right: 6,
+                child: Icon(Icons.favorite, color: Colors.redAccent, size: 18),
+              ),
+            if (photo.isVideo)
+              Positioned(
+                bottom: 4,
+                left: 4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                   decoration: BoxDecoration(
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.primary,
-                      width: 3,
-                    ),
-                    color: Theme.of(context)
-                        .colorScheme
-                        .primary
-                        .withValues(alpha: 0.25),
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.play_arrow, color: Colors.white, size: 14),
+                      SizedBox(width: 2),
+                      Text('VIDEO', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600)),
+                    ],
                   ),
                 ),
-              if (photo.isFavorite && !selected)
-                const Positioned(
-                  top: 6,
-                  right: 6,
-                  child: Icon(Icons.favorite, color: Colors.redAccent, size: 18),
-                ),
-              if (photo.isVideo)
-                Positioned(
-                  bottom: 4,
-                  left: 4,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.65),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.play_arrow, color: Colors.white, size: 14),
-                        SizedBox(width: 2),
-                        Text('VIDEO', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600)),
-                      ],
-                    ),
-                  ),
-                ),
-              if (selected)
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: Icon(Icons.check_circle,
-                      color: Theme.of(context).colorScheme.primary, size: 22),
-                ),
-            ],
-          ),
+              ),
+            if (selected)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: Icon(Icons.check_circle,
+                    color: Theme.of(context).colorScheme.primary, size: 22),
+              ),
+          ],
         ),
       ),
     );
@@ -554,7 +458,7 @@ class _Thumbnail extends StatelessWidget {
 
   const _Thumbnail({
     required this.photo,
-    this.cacheWidth = 400,
+    this.cacheWidth = 200,
     this.thumbPath,
   });
 
@@ -567,6 +471,7 @@ class _Thumbnail extends StatelessWidget {
           fit: BoxFit.cover,
           alignment: Alignment.center,
           filterQuality: FilterQuality.low,
+          cacheWidth: cacheWidth,
           errorBuilder: (context, error, stack) => _videoPlaceholder(),
         );
       }
@@ -579,6 +484,7 @@ class _Thumbnail extends StatelessWidget {
         fit: BoxFit.cover,
         alignment: Alignment.center,
         filterQuality: FilterQuality.low,
+        cacheWidth: cacheWidth,
         errorBuilder: (context, error, stack) => _fallbackFull(context),
       );
     }
