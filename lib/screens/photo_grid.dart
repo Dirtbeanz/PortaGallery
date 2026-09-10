@@ -403,6 +403,26 @@ class _PhotoTile extends StatelessWidget {
                   right: 6,
                   child: Icon(Icons.favorite, color: Colors.redAccent, size: 18),
                 ),
+              if (photo.isVideo)
+                Positioned(
+                  bottom: 4,
+                  left: 4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.play_arrow, color: Colors.white, size: 14),
+                        SizedBox(width: 2),
+                        Text('VIDEO', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ),
               if (selected)
                 Positioned(
                   top: 6,

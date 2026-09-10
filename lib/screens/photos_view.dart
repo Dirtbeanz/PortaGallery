@@ -407,7 +407,7 @@ class _Toolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       child: Row(
         children: [
           if (screenW > 500)
@@ -418,21 +418,23 @@ class _Toolbar extends StatelessWidget {
           const Spacer(),
           ZoomSlider(provider: provider),
           IconButton(
-            icon: const Icon(Icons.refresh, size: 20),
+            icon: const Icon(Icons.refresh, size: 18),
             visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             tooltip: 'Rescan for new files',
             onPressed: onRefresh,
           ),
           IconButton(
             icon: Icon(
               selectionMode ? Icons.check_box : Icons.check_box_outline_blank,
-              size: 20,
+              size: 18,
             ),
             visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             tooltip: selectionMode ? 'Exit selection' : 'Select',
             onPressed: onToggleSelection,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 2),
           _filterChip(
             context,
             label: 'Favorites',
@@ -440,7 +442,7 @@ class _Toolbar extends StatelessWidget {
             selected: provider.showFavoritesOnly,
             onSelected: (v) => provider.toggleFavoritesOnly(v),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 2),
           PopupMenuButton<SortField>(
             icon: const Icon(Icons.sort, size: 20),
             tooltip: 'Sort',

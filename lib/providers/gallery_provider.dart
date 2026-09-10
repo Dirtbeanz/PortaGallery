@@ -456,7 +456,7 @@ class GalleryProvider extends ChangeNotifier {
     final wide = screenWidth > 600;
     switch (_zoomLevel) {
       case 0:
-        return wide ? 10 : 7;
+        return wide ? 16 : 12;
       case 1:
         return 8;
       case 2:

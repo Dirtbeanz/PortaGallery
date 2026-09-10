@@ -21,11 +21,19 @@ class _MapScreenState extends State<MapScreen> {
   List<({PhotoItem photo, double lat, double lon})> _points = [];
   bool _scanning = false;
   int _scanned = 0;
+  final MapController _mapController = MapController();
+  bool _focused = false;
 
   @override
   void initState() {
     super.initState();
     _scan();
+  }
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
   }
 
   Future<void> _scan() async {
@@ -35,9 +43,10 @@ class _MapScreenState extends State<MapScreen> {
       _scanning = true;
       _scanned = 0;
       _points = [];
+      _focused = false;
     });
 
-    const batch = 8;
+    const batch = 16;
     for (var i = 0; i < photos.length; i += batch) {
       final chunk = photos.sublist(
           i, i + batch > photos.length ? photos.length : i + batch);
@@ -47,12 +56,28 @@ class _MapScreenState extends State<MapScreen> {
         return (photo: p, lat: gps.$1, lon: gps.$2);
       }));
       if (!mounted) return;
+      final newPoints = <({PhotoItem photo, double lat, double lon})>[];
+      for (final r in results) {
+        if (r != null) newPoints.add(r);
+      }
       setState(() {
-        for (final r in results) {
-          if (r != null) _points.add(r);
-        }
+        _points.addAll(newPoints);
         _scanned += chunk.length;
       });
+
+      // Focus on the most recent photo's location on first GPS hit.
+      if (!_focused && _points.isNotEmpty) {
+        _focused = true;
+        // Photos are sorted newest-first, so first point is most recent.
+        final newest = _points.first;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _mapController.move(LatLng(newest.lat, newest.lon), 6);
+          }
+        });
+      }
+
+      // Yield to event loop for responsive UI.
       await Future<void>.delayed(Duration.zero);
     }
 
@@ -67,54 +92,59 @@ class _MapScreenState extends State<MapScreen> {
       appBar: AppBar(
         title: const Text('Map'),
         actions: [
+          if (_scanning)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    value: provider.photos.isEmpty
+                        ? null
+                        : _scanned / provider.photos.length,
+                  ),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Rescan GPS data',
-            onPressed: _scan,
+            onPressed: _scanning ? null : _scan,
           ),
         ],
       ),
-      body: Column(
+      body: FlutterMap(
+        mapController: _mapController,
+        options: MapOptions(
+          initialCenter: _points.isEmpty
+              ? const LatLng(20, 0)
+              : LatLng(_points.first.lat, _points.first.lon),
+          initialZoom: _points.isEmpty ? 2 : 6,
+          interactionOptions: const InteractionOptions(
+            flags: InteractiveFlag.all,
+          ),
+        ),
         children: [
-          if (_scanning)
-            LinearProgressIndicator(value: _scanned / provider.photos.length),
-          Expanded(
-            child: FlutterMap(
-              options: MapOptions(
-                initialCenter: _points.isEmpty
-                    ? const LatLng(20, 0)
-                    : LatLng(
-                        _points.map((p) => p.lat).reduce((a, b) => a + b) /
-                            _points.length,
-                        _points.map((p) => p.lon).reduce((a, b) => a + b) /
-                            _points.length),
-                initialZoom: _points.isEmpty ? 2 : 4,
-                interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.all,
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.photoalbum.photo_gallery',
+          ),
+          MarkerLayer(
+            markers: [
+              for (final point in _points)
+                Marker(
+                  point: LatLng(point.lat, point.lon),
+                  width: 36,
+                  height: 36,
+                  child: GestureDetector(
+                    onTap: () => _openPhoto(point.photo),
+                    child: const Icon(Icons.location_on,
+                        color: Color(0xFF6750A4), size: 32),
+                  ),
                 ),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.photoalbum.photo_gallery',
-                ),
-                MarkerLayer(
-                  markers: [
-                    for (final point in _points)
-                      Marker(
-                        point: LatLng(point.lat, point.lon),
-                        width: 36,
-                        height: 36,
-                        child: GestureDetector(
-                          onTap: () => _openPhoto(point.photo),
-                          child: const Icon(Icons.location_on,
-                              color: Color(0xFF6750A4), size: 32),
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ),
+            ],
           ),
         ],
       ),

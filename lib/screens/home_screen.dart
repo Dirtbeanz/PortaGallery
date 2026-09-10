@@ -224,11 +224,87 @@ class _HomeScreenState extends State<HomeScreen> {
     if (paths.isEmpty) return;
 
     if (!context.mounted) return;
+
+    // Show album chooser.
+    final albums = provider.albums.map((a) => a.path).toList();
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(
+                title: Text('Import to album'),
+                subtitle: Text('Choose a folder or create a new one'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.folder),
+                title: const Text('Default (root)'),
+                subtitle: const Text('Import to library root'),
+                onTap: () => Navigator.of(context).pop(''),
+              ),
+              ListTile(
+                leading: const Icon(Icons.create_new_folder),
+                title: const Text('New album…'),
+                onTap: () => Navigator.of(context).pop('__new__'),
+              ),
+              const Divider(height: 1),
+              for (final album in albums)
+                ListTile(
+                  leading: const Icon(Icons.folder),
+                  title: Text(album.isEmpty ? 'Photos' : album),
+                  onTap: () => Navigator.of(context).pop(album),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (choice == null) return;
+    if (!context.mounted) return;
+
+    String? subFolder;
+    if (choice == '__new__') {
+      final controller = TextEditingController();
+      final name = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('New album'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: 'Album name'),
+              onSubmitted: (v) => Navigator.of(context).pop(v),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(controller.text),
+                child: const Text('Create & Import'),
+              ),
+            ],
+          );
+        },
+      );
+      if (name == null || name.trim().isEmpty) return;
+      subFolder = name.trim();
+    } else if (choice.isNotEmpty) {
+      subFolder = choice;
+    }
+
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Importing photos...')),
     );
 
-    await provider.importPhotos(paths);
+    await provider.importPhotos(paths, subFolder: subFolder);
 
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

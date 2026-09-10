@@ -63,7 +63,6 @@ class ThumbnailService {
       final codec = await ui.instantiateImageCodec(
         bytes,
         targetWidth: 640,
-        targetHeight: 640,
         allowUpscaling: false,
       );
       try {

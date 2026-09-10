@@ -9,14 +9,14 @@ class ZoomSlider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
-    final sliderW = (screenW * 0.30).clamp(120.0, 240.0);
+    final sliderW = (screenW * 0.20).clamp(80.0, 180.0);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
-          icon: const Icon(Icons.zoom_out, size: 20),
+          icon: const Icon(Icons.zoom_out, size: 18),
           visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           padding: EdgeInsets.zero,
           onPressed: () => provider.setZoom(provider.zoomLevel - 1),
         ),
@@ -34,9 +34,9 @@ class ZoomSlider extends StatelessWidget {
           ),
         ),
         IconButton(
-          icon: const Icon(Icons.zoom_in, size: 20),
+          icon: const Icon(Icons.zoom_in, size: 18),
           visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           padding: EdgeInsets.zero,
           onPressed: () => provider.setZoom(provider.zoomLevel + 1),
         ),
