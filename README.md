@@ -12,13 +12,15 @@ experience — albums, favorites, search, zoom, tags, and more.
 
 - **Gallery grid with 5 zoom levels** — slider that resizes tiles from a dense
   16-column overview down to large 2-column photos, with date section headers
-  that broaden as you zoom out (day → month).
+  that broaden as you zoom out (day → month). At max zoom, photos display at
+  full aspect ratio in a masonry waterfall layout.
 - **Albums** — folders on the drive become albums automatically; create new
   albums and move photos into them.
 - **Virtual collections** — SQLite-based albums that can group photos across
   different folders (e.g. "Best of 2024").
 - **Favorites** — heart any photo; persisted in a local SQLite database.
-- **Sorting** — by name, date modified, or size (ascending/descending).
+- **Sorting** — by name, date modified, date taken (EXIF), or size
+  (ascending/descending).
 - **Search** — across filenames, tags, and comments.
 - **Tags & comments** — attach tags and a note to any photo, then search by
   them. Built with future AI auto-tagging in mind.
@@ -61,6 +63,11 @@ Built for large libraries (3000+ items):
   cached thumbnails instead of reading each original image file.
 - **Isolate-based scanning** — directory scanning runs on a background isolate
   to keep the UI responsive.
+- **Optimized thumbnails** — grid thumbnails are 320px at quality 70 (half the
+  file size of earlier versions) for faster scrolling; full-resolution images
+  are only loaded in the single-photo viewer.
+- **EXIF dates during scan** — date taken is read in parallel during the initial
+  scan, so sort-by-date-taken works immediately with no extra loading.
 
 ## How it works
 
