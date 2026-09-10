@@ -1,14 +1,4 @@
 #!/bin/sh
 SELF_DIR="$(dirname "$(readlink -f "$0")")"
 cd "$SELF_DIR"
-
-# media_kit's Linux video output works reliably through GDK's X11 GL
-# context. On Wayland sessions the EGL interop can produce audio-only
-# playback, so transparently use XWayland when it is available.
-if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-  if [ -n "$DISPLAY" ] || [ -S "/tmp/.X11-unix/X0" ]; then
-    export GDK_BACKEND=x11
-  fi
-fi
-
 exec "$SELF_DIR/photo_gallery" "$@"

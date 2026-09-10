@@ -21,11 +21,17 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
   late final Player _player = Player();
   late final VideoController _controller = VideoController(
     _player,
-    configuration: const VideoControllerConfiguration(
-      // FFmpeg-based hardware decoding where available; falls back to
-      // software safely. VA-API needs `intel-media-driver` on Intel GPUs.
-      hwdec: 'auto-safe',
-    ),
+    configuration: Platform.isLinux
+        ? const VideoControllerConfiguration(
+            // Force software decode + software render on Linux to avoid
+            // broken VAAPI (no intel-media-driver) and flaky Wayland GL
+            // textures. Uses mpv's pixel-buffer path.
+            hwdec: 'no',
+            enableHardwareAcceleration: false,
+          )
+        : const VideoControllerConfiguration(
+            hwdec: 'auto-safe',
+          ),
   );
   bool _ready = false;
   bool _error = false;
