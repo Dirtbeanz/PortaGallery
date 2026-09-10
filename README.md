@@ -10,12 +10,13 @@ experience — albums, favorites, search, zoom, tags, and more.
 
 ## Features
 
-- **Gallery grid with zoom** — pinch-zoom-style slider that resizes tiles from a
-  dense overview to large, full-aspect-ratio photos.
-- **Smart date separators** — photos grouped under headers that get broader as
-  you zoom out (day → month → year).
+- **Gallery grid with 5 zoom levels** — slider that resizes tiles from a dense
+  16-column overview down to large 2-column photos, with date section headers
+  that broaden as you zoom out (day → month).
 - **Albums** — folders on the drive become albums automatically; create new
   albums and move photos into them.
+- **Virtual collections** — SQLite-based albums that can group photos across
+  different folders (e.g. "Best of 2024").
 - **Favorites** — heart any photo; persisted in a local SQLite database.
 - **Sorting** — by name, date modified, or size (ascending/descending).
 - **Search** — across filenames, tags, and comments.
@@ -24,20 +25,27 @@ experience — albums, favorites, search, zoom, tags, and more.
 - **Full-screen viewer** — pinch-to-zoom, swipe between photos, on-screen arrow
   buttons and keyboard `←`/`→` navigation, and an EXIF metadata panel.
 - **Video playback** — powered by [media_kit](https://pub.dev/packages/media_kit)
-  on both Linux and Android, with a clear play badge in the grid.
+  on both Linux and Android, with a video badge indicator in the grid and
+  ffmpeg-generated thumbnails on Linux.
+- **Map view** — browse geotagged photos on an OpenStreetMap map, auto-centers
+  on your most recent photo's location.
 - **Metadata** — view EXIF details (dimensions, date taken, camera, ISO,
   aperture, shutter, focal length, GPS).
 - **Rename** and **delete** (single or in bulk).
-- **Import / Export** — copy photos into the library (upload) or save a copy to
-  your Downloads folder (download).
+- **Import to album** — when importing photos, choose an existing album, create
+  a new one, or import to the library root.
+- **Export / download** — save a copy to your Downloads folder.
 - **Share** via the platform share sheet.
 - **Multi-select** — long-press to select several photos and batch favorite,
   move, share, or delete.
+- **Backup report** — export a CSV report of your entire library.
+- **Drive-missing detection** — shows a banner when the USB drive is
+  disconnected and auto-rescans when it reappears.
 - **Dark / light theme** following the system setting.
 
 ## Performance
 
-v1.4.0 brings major speed improvements for large libraries:
+Built for large libraries (3000+ items):
 
 - **Instant startup** — the photo list is cached in SQLite, so the app loads
   immediately on second launch while a background rescan picks up any changes.
@@ -47,10 +55,12 @@ v1.4.0 brings major speed improvements for large libraries:
   of sequentially.
 - **Async batched I/O** — thumbnail cache lookups and file existence checks run
   in parallel batches of 50 instead of synchronously one-by-one.
-- **Cached computed results** — filtered/sorted photo lists and favorites are
-  cached and only recomputed when the underlying data changes.
+- **Cached computed results** — filtered/sorted photo lists, date sections, and
+  favorites are cached and only recomputed when the underlying data changes.
 - **No full-file reads for aspect ratios** — aspect ratios are populated from
   cached thumbnails instead of reading each original image file.
+- **Isolate-based scanning** — directory scanning runs on a background isolate
+  to keep the UI responsive.
 
 ## How it works
 
@@ -70,7 +80,9 @@ a mounted USB drive.
 
 ### Linux AppImage
 
-Grab `dist/PortaGallery-x86_64.AppImage`, make it executable, and run:
+Grab `PortaGallery-x86_64.AppImage` from the
+[latest release](https://github.com/Dirtbeanz/PortaGallery/releases/latest),
+make it executable, and run:
 
 ```sh
 chmod +x PortaGallery-x86_64.AppImage
@@ -81,10 +93,15 @@ Video playback on Linux uses the system's `libmpv` (install `mpv` if it's
 missing: `sudo pacman -S mpv` on Arch, `sudo apt install libmpv-dev` on
 Debian/Ubuntu).
 
+For HEIC/HEIF support: `sudo pacman -S libheif` (Arch) or equivalent.
+
+For hardware video decode (Intel): `sudo pacman -S intel-media-driver libva-utils`.
+
 ### Android APK
 
-Build it (see below) and install `build/app/outputs/flutter-apk/app-release.apk`
-onto your device.
+Download `PortaGallery-vX.Y.Z.apk` from the
+[latest release](https://github.com/Dirtbeanz/PortaGallery/releases/latest),
+enable installs from unknown sources, and install.
 
 ## Building from source
 
@@ -128,35 +145,51 @@ flutter test
 
 ```
 lib/
-  main.dart                     App entry point
-  models/                       PhotoItem, Album, SortMode, PhotoMetadata, PhotoNotes
+  main.dart                        App entry point
+  models/                          PhotoItem, Album, SortMode, PhotoMetadata, PhotoNotes
   providers/gallery_provider.dart  Central state (ChangeNotifier)
   services/
-    config_service.dart         Config file (library path)
-    database_service.dart       SQLite (favorites, tags/comments, photo cache)
-    photo_service.dart          Directory scanning, import/export, dimensions
-    metadata_service.dart       EXIF reading
-    thumbnail_service.dart      Thumbnail generation & caching
-    permission_service.dart     Android storage permissions
-  screens/                      Home, photos, albums, favorites, viewer, settings
-  widgets/                      Video player, tags editor, path dialog, photo grid
+    config_service.dart            Config file (library path, show hidden folders)
+    database_service.dart          SQLite (favorites, tags/comments, virtual albums, photo cache)
+    photo_service.dart             Directory scanning, import/export, dimensions
+    metadata_service.dart          EXIF reading (including GPS for map view)
+    thumbnail_service.dart         Thumbnail generation with EXIF orientation correction
+    external_player_service.dart   Launch system video player (mpv/haruna/vlc) on Linux
+    permission_service.dart        Android storage permissions
+  screens/
+    home_screen.dart               Main scaffold with nav bar, search, import
+    photos_view.dart               Photos tab with toolbar and multi-select
+    photo_grid.dart                Grid widget with date sections and scroll indicators
+    photo_viewer_screen.dart       Full-screen viewer with metadata panel
+    albums_view.dart               Folder albums + virtual collections
+    album_detail_screen.dart       Single folder album grid
+    virtual_album_screen.dart      Virtual album view/manage
+    favorites_view.dart            Favorites grid
+    map_screen.dart                flutter_map with EXIF GPS markers
+    settings_screen.dart           Library config, backup report, logo
+  widgets/
+    video_player_view.dart         media_kit video with custom controls
+    zoom_slider.dart               Shared zoom slider widget
+    notes_editor.dart              Tags + comments editor
+    manual_path_dialog.dart        Manual path entry dialog
 packaging/
-  build_appimage.sh             AppImage build script
-  AppRun, photo_gallery.desktop AppImage metadata
-  logo.png                      App icon/logo source
-android/                        Android platform project
-linux/                          Linux platform project
-test/                           Unit tests
-assets/                         Bundled assets (logo)
+  build_appimage.sh                AppImage build script
+  AppRun, photo_gallery.desktop    AppImage metadata
+  logo.png                         App icon/logo source
+android/                           Android platform project
+linux/                             Linux platform project
+test/                              Unit tests
+assets/                            Bundled assets (logo)
 ```
 
 ## Config file format
 
-`config.json` contains a single key:
+`config.json` contains the following keys:
 
 ```json
 {
-  "libraryPath": "/path/to/your/photos"
+  "libraryPath": "/path/to/your/photos",
+  "showHiddenFolders": false
 }
 ```
 
@@ -169,7 +202,6 @@ Some ideas on the radar:
 
 - **AI auto-tagging** — use on-device/cloud models to tag photos by people,
   places, and objects (the tags/comments system was built with this in mind).
-- **Video thumbnails** instead of the static play badge.
 - **Slideshow** mode and more import/export options (e.g. cloud storage).
 - Better **Android USB-drive** handling without requiring "All files access".
 - A Windows or macOS build.
