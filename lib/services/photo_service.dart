@@ -98,7 +98,7 @@ class PhotoService {
             parent == rootAbs ? '' : p.relative(parent, from: rootAbs);
 
         DateTime? dateTaken;
-        // EXIF date reading deferred to background — not during scan.
+        // EXIF date reading deferred to background enrichment.
 
         out.add(PhotoItem(
           path: file.path,

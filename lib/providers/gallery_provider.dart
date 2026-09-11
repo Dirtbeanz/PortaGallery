@@ -168,11 +168,7 @@ class GalleryProvider extends ChangeNotifier {
       isConfigured = true;
       // Persist scanned photos so next startup is instant.
       _database.savePhotoCache(scanned);
-      // Clear thumbnail state — they'll regenerate lazily as the user scrolls.
-      _thumbPaths = {};
-      _thumbPending.clear();
-      _thumbInFlight.clear();
-      _aspectRatios.clear();
+      await _loadExistingThumbnails();
     } finally {
       isLoading = false;
       notifyListeners();
@@ -195,7 +191,6 @@ class GalleryProvider extends ChangeNotifier {
           changed = true;
         }
       }));
-      // Yield to keep UI responsive.
       await Future<void>.delayed(Duration.zero);
     }
     if (changed) {
@@ -204,18 +199,42 @@ class GalleryProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> _loadExistingThumbnails() async {
+    final dir = await ThumbnailService.cacheDir();
+    final map = <String, String>{};
+    const batchSize = 50;
+    for (var i = 0; i < _photos.length; i += batchSize) {
+      final end = i + batchSize > _photos.length ? _photos.length : i + batchSize;
+      await Future.wait(_photos.sublist(i, end).map((photo) async {
+        final candidate =
+            p.join(dir.path, '${ThumbnailService.key(photo)}.jpg');
+        if (await File(candidate).exists()) {
+          map[photo.path] = candidate;
+          final dims = PhotoService.readDimensions(candidate);
+          if (dims != null && dims.$2 > 0) {
+            final ratio = dims.$1 / dims.$2;
+            _aspectRatios[photo.path] = ratio;
+            photo.aspectRatio = ratio;
+          }
+        }
+      }));
+      // Yield to the event loop so the UI stays responsive.
+      await Future<void>.delayed(Duration.zero);
+    }
+    _thumbPaths = map;
+    _thumbPending.clear();
+  }
+
   void requestThumbnails(List<PhotoItem> photos) {
     var added = false;
     for (final photo in photos) {
       if (_thumbPaths.containsKey(photo.path)) continue;
       if (_thumbPending.contains(photo.path)) continue;
       if (_thumbInFlight.contains(photo.path)) continue;
-      // Cap pending queue to prevent unbounded growth with 18k items.
-      if (_thumbPending.length > 200) break;
       _thumbPending.add(photo.path);
       added = true;
     }
-    if (added && !_thumbing) {
+    if (added) {
       _drainThumbQueue();
     }
   }
@@ -224,12 +243,11 @@ class GalleryProvider extends ChangeNotifier {
     if (_thumbing) return;
     _thumbing = true;
     var changed = 0;
-    var generated = 0;
-    const maxPerCycle = 20;
     try {
-      while (_thumbPending.isNotEmpty && generated < maxPerCycle) {
+      while (_thumbPending.isNotEmpty) {
+        // Collect a batch of pending paths.
         final batch = <String>[];
-        while (batch.length < 2 && _thumbPending.isNotEmpty) {
+        while (batch.length < 3 && _thumbPending.isNotEmpty) {
           final path = _thumbPending.first;
           _thumbPending.remove(path);
           final photo = _photoIndex[path];
@@ -239,6 +257,7 @@ class GalleryProvider extends ChangeNotifier {
         }
         if (batch.isEmpty) continue;
 
+        // Generate thumbnails in parallel.
         final results = await Future.wait(batch.map((path) async {
           final photo = _photoIndex[path]!;
           try {
@@ -256,8 +275,6 @@ class GalleryProvider extends ChangeNotifier {
                 return (path: path, target: target);
               }
             }
-          } catch (_) {
-            // Don't let one bad file crash the whole queue.
           } finally {
             _thumbInFlight.remove(path);
           }
@@ -268,27 +285,18 @@ class GalleryProvider extends ChangeNotifier {
           if (r != null) {
             _thumbPaths[r.path] = r.target;
             changed++;
-            generated++;
           }
         }
 
-        if (changed >= 8) {
+        // Batch notifications to avoid re-laying out the grid on every thumbnail.
+        if (changed >= 12) {
           notifyListeners();
           changed = 0;
         }
-
-        // Yield to let the UI breathe.
-        await Future<void>.delayed(Duration.zero);
       }
     } finally {
       _thumbing = false;
       if (changed > 0) notifyListeners();
-      // If there are still pending items, schedule another cycle with a delay.
-      if (_thumbPending.isNotEmpty) {
-        Future.delayed(const Duration(milliseconds: 200), () {
-          if (!_thumbing) _drainThumbQueue();
-        });
-      }
     }
   }
 
@@ -386,8 +394,6 @@ class GalleryProvider extends ChangeNotifier {
 
   void setZoom(int level) {
     _zoomLevel = level.clamp(0, 4);
-    // Don't mark sections dirty — date groupings don't change with zoom.
-    // Just notify so the grid relayouts.
     notifyListeners();
   }
 
@@ -437,7 +443,6 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   String dateKey(DateTime dt) {
-    // Always group by day — sections are independent of zoom level.
     return '${dt.year}-${_pad(dt.month)}-${_pad(dt.day)}';
   }
 

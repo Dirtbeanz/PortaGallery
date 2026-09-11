@@ -12,8 +12,8 @@ void main() {
   } catch (_) {
     // Video playback will simply show an error if libmpv is missing.
   }
-  PaintingBinding.instance.imageCache.maximumSize = 200;
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 100 << 20;
+  PaintingBinding.instance.imageCache.maximumSize = 80;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 60 << 20;
   runApp(const PhotoGalleryApp());
 }
 
