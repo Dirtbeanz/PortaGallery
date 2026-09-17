@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/gallery_provider.dart';
 import '../services/config_service.dart';
+import '../services/diagnostic_log_service.dart';
 import '../widgets/manual_path_dialog.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -116,8 +117,51 @@ class SettingsScreen extends StatelessWidget {
                 subtitle: const Text('Holds the library path'),
                 onTap: () => _showConfigLocation(context),
               ),
+              ListTile(
+                leading: const Icon(Icons.bug_report),
+                title: const Text('Diagnostic log location'),
+                subtitle: const Text(
+                    'Crash and scan logs for troubleshooting (temporary)'),
+                onTap: () => _showLogLocation(context),
+              ),
             ],
           )),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showLogLocation(BuildContext context) async {
+    final path = DiagnosticLogService.instance.logPath;
+    if (!context.mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Diagnostic log'),
+        content: SelectableText(
+            path ?? 'No log written yet for this session.'),
+        actions: [
+          if (path != null)
+            TextButton(
+              onPressed: () async {
+                try {
+                  final downloads = await getDownloadsDirectory();
+                  if (downloads == null) return;
+                  await File(path).copy(p.join(
+                      downloads.path, p.basename(path)));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(
+                            'Copied to ${downloads.path}/${p.basename(path)}')));
+                  }
+                } catch (_) {}
+              },
+              child: const Text('Copy to Downloads'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
         ],
       ),
     );

@@ -234,7 +234,6 @@ class DatabaseService {
     for (final path in missingPaths) {
       batch.delete('favorites', where: 'path = ?', whereArgs: [path]);
       batch.delete('notes', where: 'path = ?', whereArgs: [path]);
-      batch.delete('date_overrides', where: 'path = ?', whereArgs: [path]);
       batch.delete('virtual_album_items',
           where: 'path = ?', whereArgs: [path]);
       batch.delete('photo_cache', where: 'path = ?', whereArgs: [path]);

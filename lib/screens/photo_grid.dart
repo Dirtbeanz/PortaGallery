@@ -43,6 +43,7 @@ class _PhotoGridState extends State<PhotoGrid> {
   String? _pendingAnchor;
   // Cached justified-row layout, invalidated by content/width/column changes.
   List<List<_JustifiedRow>>? _layoutCache;
+  final List<({int section, int row})> _entries = [];
   double? _layoutWidth;
   int? _layoutColumns;
   bool? _layoutSquare;
@@ -214,19 +215,21 @@ class _PhotoGridState extends State<PhotoGrid> {
             for (final section in widget.sections)
               _buildRows(section.photos, width, hPadding, spacing),
           ];
-        }
-        final layout = _layoutCache!;
-
-        // Estimate section starts using actual row heights.
-        _sectionStarts = [];
-        var acc = 0.0;
-        for (var s = 0; s < widget.sections.length; s++) {
-          _sectionStarts.add(acc);
-          acc += 46; // header
-          for (final row in layout[s]) {
-            acc += row.height + spacing;
+          _entries.clear();
+          _sectionStarts = [];
+          var offset = 0.0;
+          for (var s = 0; s < widget.sections.length; s++) {
+            _sectionStarts.add(offset);
+            _entries.add((section: s, row: -1));
+            offset += 46;
+            final rows = _layoutCache![s];
+            for (var r = 0; r < rows.length; r++) {
+              _entries.add((section: s, row: r));
+              offset += rows[r].height + spacing;
+            }
           }
         }
+        final layout = _layoutCache!;
 
         if (_pendingAnchor != null) {
           WidgetsBinding.instance
@@ -245,17 +248,22 @@ class _PhotoGridState extends State<PhotoGrid> {
                 controller: _scrollController,
                 cacheExtent: 800,
                 slivers: [
-                  for (var s = 0; s < widget.sections.length; s++) ...[
-                    SliverToBoxAdapter(
-                        child: _DateHeader(label: widget.sections[s].header)),
-                    _buildJustifiedSection(
-                      context,
-                      widget.sections[s].photos,
-                      layout[s],
-                      hPadding,
-                      spacing,
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final entry = _entries[index];
+                        if (entry.row < 0) {
+                          return _DateHeader(
+                              label: widget.sections[entry.section].header);
+                        }
+                        return _buildRow(context,
+                            layout[entry.section][entry.row], index,
+                            hPadding, spacing);
+                      },
+                      childCount: _entries.length,
+                      addAutomaticKeepAlives: false,
                     ),
-                  ],
+                  ),
                 ],
               ),
             ),
@@ -356,54 +364,39 @@ class _PhotoGridState extends State<PhotoGrid> {
     return rows;
   }
 
-  Widget _buildJustifiedSection(
+  Widget _buildRow(
     BuildContext context,
-    List<PhotoItem> photos,
-    List<_JustifiedRow> rows,
+    _JustifiedRow row,
+    int index,
     double hPadding,
     double spacing,
   ) {
     final provider = context.read<GalleryProvider>();
-
-    return SliverPadding(
-      padding: EdgeInsets.symmetric(horizontal: hPadding),
-      sliver: SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            final row = rows[index];
-            provider.requestThumbnails(row.items.map((i) => i.photo).toList());
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (var j = 0; j < row.items.length; j++) ...[
-                    if (j > 0) SizedBox(width: spacing),
-                    SizedBox(
-                      width: row.items[j].width,
-                      height: row.height,
-                      child: RepaintBoundary(
-                        child: _PhotoTile(
-                          photo: row.items[j].photo,
-                          index: index * 10 + j,
-                          selected: widget.selectedPaths
-                              .contains(row.items[j].photo.path),
-                          thumbPath: provider
-                              .thumbPathOrNull(row.items[j].photo),
-                          onTap: widget.onPhotoTap,
-                          onLongPress: widget.onPhotoLongPress,
-                          viewerPhotos: widget.viewerPhotos,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+    provider.requestThumbnails(row.items.map((item) => item.photo).toList());
+    return Padding(
+      padding: EdgeInsets.fromLTRB(hPadding, 0, hPadding, spacing),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var j = 0; j < row.items.length; j++) ...[
+            if (j > 0) SizedBox(width: spacing),
+            SizedBox(
+              width: row.items[j].width,
+              height: row.height,
+              child: RepaintBoundary(
+                child: _PhotoTile(
+                  photo: row.items[j].photo,
+                  index: index * 10 + j,
+                  selected: widget.selectedPaths.contains(row.items[j].photo.path),
+                  thumbPath: provider.thumbPathOrNull(row.items[j].photo),
+                  onTap: widget.onPhotoTap,
+                  onLongPress: widget.onPhotoLongPress,
+                  viewerPhotos: widget.viewerPhotos,
+                ),
               ),
-            );
-          },
-          childCount: rows.length,
-          addAutomaticKeepAlives: false,
-        ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -590,22 +583,10 @@ class _Thumbnail extends StatelessWidget {
   }
 
   Widget _fallback(BuildContext context) {
-    return Image.file(
-      File(photo.path),
-      fit: BoxFit.cover,
-      alignment: Alignment.center,
-      cacheWidth: 200,
-      filterQuality: FilterQuality.low,
-      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-        if (wasSynchronouslyLoaded || frame != null) return child;
-        return const ColoredBox(color: Color(0xFF2A2A2E));
-      },
-      errorBuilder: (context, error, stack) => const ColoredBox(
-        color: Color(0xFF333333),
-        child: Center(
-          child: Icon(Icons.broken_image_outlined,
-              color: Colors.white54, size: 28),
-        ),
+    return const ColoredBox(
+      color: Color(0xFF2A2A2E),
+      child: Center(
+        child: Icon(Icons.photo_outlined, color: Colors.white54, size: 28),
       ),
     );
   }

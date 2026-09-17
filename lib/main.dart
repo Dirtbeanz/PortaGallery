@@ -4,9 +4,11 @@ import 'package:provider/provider.dart';
 
 import 'providers/gallery_provider.dart';
 import 'screens/home_screen.dart';
+import 'services/diagnostic_log_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  DiagnosticLogService.instance.initialize();
   try {
     MediaKit.ensureInitialized();
   } catch (_) {

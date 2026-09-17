@@ -9,6 +9,7 @@ import '../models/photo_item.dart';
 import '../models/photo_notes.dart';
 import '../services/config_service.dart';
 import '../services/database_service.dart';
+import '../services/diagnostic_log_service.dart';
 import '../services/photo_service.dart';
 import '../services/thumbnail_service.dart';
 
@@ -99,18 +100,32 @@ class GalleryProvider extends ChangeNotifier {
       // Load cached photo list for instant UI, then rescan in background.
       final cached = await _database.loadPhotoCache();
       if (!_isCurrent(generation)) return;
-      if (cached != null && cached.isNotEmpty) {
-        for (final photo in cached) {
+      // Only trust cache rows that actually live under the current library
+      // root — the cache is global, so stale rows from previous libraries
+      // must not inflate the shown item count.
+      final root = p.normalize(libraryPath!);
+      final scoped = cached
+          ?.where((photo) => p.isWithin(root, photo.path) ||
+              p.equals(root, photo.path))
+          .toList();
+      if (scoped != null && scoped.isNotEmpty) {
+        for (final photo in scoped) {
           photo.isFavorite = _favoritePaths.contains(photo.path);
         }
-        _photos = cached;
-        _photoIndex = {for (final photo in cached) photo.path: photo};
+        _photos = scoped;
+        _photoIndex = {for (final photo in scoped) photo.path: photo};
         _albums = _buildAlbums();
         _sectionsDirty = true;
         _visiblePhotosDirty = true;
         _favoritesCache = null;
         isConfigured = true;
         isLoading = true;
+        DiagnosticLogService.instance.recordScanSummary(
+          libraryPath: libraryPath!,
+          scannedCount: scoped.length,
+          cacheCount: cached?.length ?? 0,
+          duplicateCount: cached!.length - scoped.length,
+        );
         notifyListeners();
         // Fire-and-forget background rescan; it will notify when done.
         rescan();
@@ -230,6 +245,12 @@ class GalleryProvider extends ChangeNotifier {
       _visiblePhotosDirty = true;
       _favoritesCache = null;
       isConfigured = true;
+      DiagnosticLogService.instance.recordScanSummary(
+        libraryPath: path,
+        scannedCount: scanned.length,
+        cacheCount: _photos.length,
+        duplicateCount: 0,
+      );
       // Persist scanned photos so next startup is instant.
       try {
         await _database.savePhotoCache(scanned);
