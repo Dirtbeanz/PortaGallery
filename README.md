@@ -10,10 +10,13 @@ experience — albums, favorites, search, zoom, tags, and more.
 
 ## Features
 
-- **Gallery grid with 5 zoom levels** — slider that resizes tiles from a dense
-  16-column overview down to large 2-column photos, with date section headers
-  that broaden as you zoom out (day → month). At max zoom, photos display at
-  full aspect ratio in a masonry waterfall layout.
+- **Gallery grid with 5 zoom levels** — zoom buttons select row heights of
+  80, 120, 160, 200, or 260 logical pixels on Linux and Android. Rows keep the
+  same height at each zoom level, with variable-width, uncropped previews
+  instead of forced square tiles. Rows can leave unused space at the right;
+  very wide images fit within the available width without stretching.
+- **Date navigation** — day section headers and a top-center date indicator
+  while scrolling.
 - **Albums** — folders on the drive become albums automatically; create new
   albums and move photos into them.
 - **Virtual collections** — SQLite-based albums that can group photos across
@@ -47,27 +50,31 @@ experience — albums, favorites, search, zoom, tags, and more.
 
 ## Performance
 
-Built for large libraries (3000+ items):
+Designed to keep large libraries responsive:
 
-- **Instant startup** — the photo list is cached in SQLite, so the app loads
-  immediately on second launch while a background rescan picks up any changes.
-- **Parallel directory scanning** — subdirectories are scanned in batches of 8
-  simultaneously instead of one at a time.
-- **Parallel thumbnail generation** — 6 thumbnails are generated at once instead
-  of sequentially.
-- **Async batched I/O** — thumbnail cache lookups and file existence checks run
-  in parallel batches of 50 instead of synchronously one-by-one.
-- **Cached computed results** — filtered/sorted photo lists, date sections, and
-  favorites are cached and only recomputed when the underlying data changes.
-- **No full-file reads for aspect ratios** — aspect ratios are populated from
-  cached thumbnails instead of reading each original image file.
-- **Isolate-based scanning** — directory scanning runs on a background isolate
-  to keep the UI responsive.
-- **Optimized thumbnails** — grid thumbnails are 320px at quality 70 (half the
-  file size of earlier versions) for faster scrolling; full-resolution images
-  are only loaded in the single-photo viewer.
-- **EXIF dates during scan** — date taken is read in parallel during the initial
-  scan, so sort-by-date-taken works immediately with no extra loading.
+- **Lazy timeline** — one list delegate builds nearby headers and photo rows,
+  rather than creating an offscreen first row for every date section. An
+  18,000-item widget regression test checks that initial thumbnail requests
+  stay below 100 for its viewport and zoom configuration.
+- **Thumbnail-only grid** — missing or failed thumbnails show placeholders;
+  grid cells never fall back to decoding original photos.
+- **Cached startup** — SQLite supplies the initial photo list, filtered to the
+  selected library root, while a background rescan checks for changes.
+- **Background indexing** — directory scanning, existing-thumbnail discovery,
+  and lightweight JPEG EXIF date enrichment run in background isolates.
+  Date-taken sorting can update as enrichment finishes.
+- **Controlled thumbnail work** — up to three generation jobs run concurrently;
+  failed items are tracked to avoid continuous retries. Generated images use
+  bounded decode dimensions and atomic cache writes.
+- **Cached geometry and lists** — row layouts, filtered/sorted lists, date
+  sections, and favorites are cached. Thumbnail-derived aspect ratios update
+  layouts without opening every original in the grid.
+- **Lifecycle guards** — serialized rescans and generation checks prevent stale
+  asynchronous results from replacing newer library state.
+
+Gallery loading has been reported responsive on Linux and Android with an
+approximately 18,000-item library. This is user feedback, not a guarantee for
+all devices or media formats.
 
 ## How it works
 
@@ -102,7 +109,28 @@ Debian/Ubuntu).
 
 For HEIC/HEIF support: `sudo pacman -S libheif` (Arch) or equivalent.
 
-For hardware video decode (Intel): `sudo pacman -S intel-media-driver libva-utils`.
+Linux currently uses software video decoding; Android retains `auto-safe`
+hardware decoding. Installing VAAPI drivers alone does not enable hardware
+decoding in this Linux build.
+
+### Known limitations and diagnostics
+
+- **Linux video playback remains under investigation.** Some clips may lag or
+  show a black screen with audio. The video controller is now attached before
+  media opens, and player errors/first-frame timeouts are logged, but native
+  HEVC playback has not been verified by the automated tests. Use **Open with
+  system player** when needed.
+- Existing thumbnail files may retain older cropping or incorrect dimensions;
+  the grid cannot restore pixels missing from a cached thumbnail.
+- Temporary diagnostic logging captures Flutter/Dart errors, scan summaries,
+  memory-pressure notifications, and video errors. It cannot reliably capture
+  native process crashes or OS memory kills; those may require system logs.
+- Find the current log in **Settings → Diagnostic log location**. Linux logs
+  are under `~/.local/share/com.photoalbum.photo_gallery/logs/`; Android uses
+  private app storage. **Copy to Downloads** requires a writable Downloads
+  directory and may depend on Android storage permissions.
+- Logs are local and may contain library paths, filenames, and error details.
+  Review them before sharing. Only recent sessions are retained.
 
 ### Android APK
 
@@ -161,6 +189,7 @@ lib/
     photo_service.dart             Directory scanning, import/export, dimensions
     metadata_service.dart          EXIF reading (including GPS for map view)
     thumbnail_service.dart         Thumbnail generation with EXIF orientation correction
+    diagnostic_log_service.dart    Temporary local error and scan logging
     external_player_service.dart   Launch system video player (mpv/haruna/vlc) on Linux
     permission_service.dart        Android storage permissions
   screens/
@@ -176,7 +205,7 @@ lib/
     settings_screen.dart           Library config, backup report, logo
   widgets/
     video_player_view.dart         media_kit video with custom controls
-    zoom_slider.dart               Shared zoom slider widget
+    zoom_slider.dart               Shared zoom buttons
     notes_editor.dart              Tags + comments editor
     manual_path_dialog.dart        Manual path entry dialog
 packaging/

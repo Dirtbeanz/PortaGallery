@@ -21,6 +21,48 @@ class RecordingGalleryProvider extends GalleryProvider {
 }
 
 void main() {
+  testWidgets('all zooms keep equal row heights and natural tile ratios',
+      (tester) async {
+    final provider = RecordingGalleryProvider();
+    final photos = List.generate(12, (index) => PhotoItem(
+      path: '/fixture/$index.mp4', name: '$index.mp4', album: '',
+      sizeBytes: 1, modifiedAt: DateTime(2026), isVideo: true,
+      aspectRatio: index.isEven ? 1.5 : 0.5,
+    ));
+    var previousHeight = 0.0;
+    try {
+      for (final width in [400.0, 1000.0]) {
+        await tester.binding.setSurfaceSize(Size(width, 700));
+        previousHeight = 0;
+        for (var zoom = 0; zoom < 5; zoom++) {
+          provider.setZoom(zoom);
+          final height = provider.rowHeightForZoom();
+          expect(height, greaterThan(previousHeight));
+          previousHeight = height;
+          await tester.pumpWidget(ChangeNotifierProvider<GalleryProvider>.value(
+            value: provider,
+            child: MaterialApp(home: Scaffold(body: PhotoGrid(
+              sections: [(header: 'Photos', photos: photos)],
+              targetRowHeight: height,
+            ))),
+          ));
+          await tester.pump();
+          final tiles = tester.widgetList<SizedBox>(find.byType(SizedBox))
+              .where((box) => box.child is RepaintBoundary && box.width != null);
+          expect(tiles, isNotEmpty);
+          for (final tile in tiles) {
+            expect(tile.height, height);
+            expect(tile.width! / height, anyOf(closeTo(1.5, 0.001), closeTo(0.5, 0.001)));
+          }
+          expect(tester.takeException(), isNull);
+        }
+      }
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.binding.setSurfaceSize(null);
+      provider.dispose();
+    }
+  });
   testWidgets('missing image thumbnails never decode originals', (tester) async {
     final provider = RecordingGalleryProvider();
     final photo = PhotoItem(

@@ -12,20 +12,24 @@ class VideoPlayerView extends StatefulWidget {
   final File file;
   final VoidCallback? onTap;
 
-  const VideoPlayerView({super.key, required this.file, this.onTap});
+  @visibleForTesting
+  final Player Function()? playerFactory;
+
+  const VideoPlayerView({
+    super.key,
+    required this.file,
+    this.onTap,
+    this.playerFactory,
+  });
 
   @override
   State<VideoPlayerView> createState() => _VideoPlayerViewState();
 }
 
 class _VideoPlayerViewState extends State<VideoPlayerView> {
-  late final Player _player = Player();
-  late final VideoController _controller = VideoController(
-    _player,
-    configuration: const VideoControllerConfiguration(
-      hwdec: 'auto-safe',
-    ),
-  );
+  late final Player _player;
+  late final VideoController _controller;
+  late final StreamSubscription<PlayerLog> _logSubscription;
   bool _ready = false;
   bool _error = false;
   bool _renderFailed = false;
@@ -33,10 +37,18 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
   @override
   void initState() {
     super.initState();
-    _player.stream.log.listen((event) {
+    _player = widget.playerFactory?.call() ?? Player();
+    _controller = VideoController(
+      _player,
+      configuration: VideoControllerConfiguration(
+        hwdec: Platform.isLinux ? 'no' : 'auto-safe',
+      ),
+    );
+    _logSubscription = _player.stream.log.listen((event) {
       if (event.level == 'error' || event.level == 'fatal') {
         DiagnosticLogService.instance
             .log('MPV ${event.level}: ${event.text}');
+        DiagnosticLogService.instance.flush();
       }
     });
     _init();
@@ -50,6 +62,7 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
       _watchFirstFrame();
     } catch (e) {
       DiagnosticLogService.instance.log('VIDEO OPEN ERROR ${widget.file.path}: $e');
+      DiagnosticLogService.instance.flush();
       if (mounted) setState(() => _error = true);
     }
   }
@@ -59,8 +72,12 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
     try {
       await _controller.waitUntilFirstFrameRendered
           .timeout(const Duration(seconds: 5));
-    } catch (_) {
-      if (mounted && _player.state.playing) {
+    } catch (e) {
+      if (!mounted) return;
+      DiagnosticLogService.instance
+          .log('VIDEO FIRST FRAME ERROR ${widget.file.path}: $e');
+      DiagnosticLogService.instance.flush();
+      if (_player.state.playing) {
         setState(() => _renderFailed = true);
       }
     }
@@ -68,6 +85,7 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
 
   @override
   void dispose() {
+    _logSubscription.cancel();
     _player.dispose();
     super.dispose();
   }

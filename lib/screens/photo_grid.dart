@@ -306,25 +306,18 @@ class _PhotoGridState extends State<PhotoGrid> {
     var currentWidth = 0.0;
 
     for (final photo in photos) {
-      final ratio = provider.getAspectRatio(photo);
-      final itemWidth = rowHeight * ratio;
-      currentRow.add(_RowItem(photo: photo, width: itemWidth));
-      currentWidth += itemWidth + spacing;
-
-      if (currentWidth >= availableWidth) {
-        // Scale row to fill width.
-        final totalItemWidth = currentRow.fold<double>(
-            0, (sum, item) => sum + item.width);
-        final totalSpacing = (currentRow.length - 1) * spacing;
-        final scale = (availableWidth - totalSpacing) / totalItemWidth;
-        final scaledRow = currentRow
-            .map((item) =>
-                _RowItem(photo: item.photo, width: item.width * scale))
-            .toList();
-        rows.add(_JustifiedRow(items: scaledRow, height: rowHeight * scale));
+      final rawRatio = provider.getAspectRatio(photo);
+      final ratio = rawRatio.isFinite && rawRatio > 0 ? rawRatio : 1.0;
+      final itemWidth = (rowHeight * ratio).clamp(1.0, availableWidth);
+      final gap = currentRow.isEmpty ? 0.0 : spacing;
+      if (currentRow.isNotEmpty &&
+          currentWidth + gap + itemWidth > availableWidth) {
+        rows.add(_JustifiedRow(items: currentRow, height: rowHeight));
         currentRow = [];
         currentWidth = 0;
       }
+      currentWidth += (currentRow.isEmpty ? 0 : spacing) + itemWidth;
+      currentRow.add(_RowItem(photo: photo, width: itemWidth));
     }
 
     // Last row: don't scale, use natural height.
@@ -529,7 +522,7 @@ class _Thumbnail extends StatelessWidget {
       if (thumbPath != null) {
         return Image.file(
           File(thumbPath!),
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
           alignment: Alignment.center,
           filterQuality: FilterQuality.low,
           cacheWidth: gridCacheWidth,
@@ -542,7 +535,7 @@ class _Thumbnail extends StatelessWidget {
     if (thumbPath != null) {
       return Image.file(
         File(thumbPath!),
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         alignment: Alignment.center,
         filterQuality: FilterQuality.low,
         cacheWidth: gridCacheWidth,
