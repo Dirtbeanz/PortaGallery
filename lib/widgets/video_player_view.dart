@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../services/diagnostic_log_service.dart';
 import '../services/external_player_service.dart';
 
 class VideoPlayerView extends StatefulWidget {
@@ -21,13 +22,9 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
   late final Player _player = Player();
   late final VideoController _controller = VideoController(
     _player,
-    configuration: Platform.isLinux
-        ? const VideoControllerConfiguration(
-            hwdec: 'no',
-          )
-        : const VideoControllerConfiguration(
-            hwdec: 'auto-safe',
-          ),
+    configuration: const VideoControllerConfiguration(
+      hwdec: 'auto-safe',
+    ),
   );
   bool _ready = false;
   bool _error = false;
@@ -36,6 +33,12 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
   @override
   void initState() {
     super.initState();
+    _player.stream.log.listen((event) {
+      if (event.level == 'error' || event.level == 'fatal') {
+        DiagnosticLogService.instance
+            .log('MPV ${event.level}: ${event.text}');
+      }
+    });
     _init();
   }
 
@@ -45,7 +48,8 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
       if (!mounted) return;
       setState(() => _ready = true);
       _watchFirstFrame();
-    } catch (_) {
+    } catch (e) {
+      DiagnosticLogService.instance.log('VIDEO OPEN ERROR ${widget.file.path}: $e');
       if (mounted) setState(() => _error = true);
     }
   }
