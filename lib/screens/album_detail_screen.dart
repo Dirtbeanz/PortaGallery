@@ -20,7 +20,6 @@ class AlbumDetailScreen extends StatelessWidget {
     final sorted = List<PhotoItem>.from(photos)
       ..sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
     final sections = provider.buildDateSections(sorted);
-    final columns = provider.columnsForZoom(MediaQuery.of(context).size.width);
 
     return Scaffold(
       appBar: AppBar(
@@ -48,8 +47,7 @@ class AlbumDetailScreen extends StatelessWidget {
           Expanded(
             child: PhotoGrid(
               sections: sections,
-              columns: columns,
-              squareTiles: provider.useSquareTiles,
+              targetRowHeight: provider.rowHeightForZoom(),
               viewerPhotos: sorted,
             ),
           ),

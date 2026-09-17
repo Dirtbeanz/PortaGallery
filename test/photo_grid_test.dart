@@ -40,8 +40,7 @@ void main() {
             home: Scaffold(
               body: PhotoGrid(
                 sections: [(header: 'Photos', photos: [photo])],
-                columns: 4,
-                squareTiles: true,
+                targetRowHeight: 120,
                 onPhotoTap: (photo) => tapped = photo,
               ),
             ),
@@ -82,8 +81,7 @@ void main() {
             home: Scaffold(
               body: PhotoGrid(
                 sections: sections,
-                columns: 4,
-                squareTiles: true,
+                targetRowHeight: 120,
                 onPhotoTap: (_) {},
               ),
             ),

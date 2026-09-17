@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -13,8 +12,7 @@ import 'photo_viewer_screen.dart';
 class PhotoGrid extends StatefulWidget {
   final List<({String header, List<PhotoItem> photos})> sections;
   final Set<String> selectedPaths;
-  final int columns;
-  final bool squareTiles;
+  final double targetRowHeight;
   final List<PhotoItem>? viewerPhotos;
   final ValueChanged<PhotoItem>? onPhotoTap;
   final ValueChanged<PhotoItem>? onPhotoLongPress;
@@ -22,8 +20,7 @@ class PhotoGrid extends StatefulWidget {
   const PhotoGrid({
     super.key,
     required this.sections,
-    required this.columns,
-    required this.squareTiles,
+    required this.targetRowHeight,
     this.selectedPaths = const {},
     this.viewerPhotos,
     this.onPhotoTap,
@@ -41,12 +38,11 @@ class _PhotoGridState extends State<PhotoGrid> {
   bool _showLabel = false;
   List<double> _sectionStarts = [];
   String? _pendingAnchor;
-  // Cached justified-row layout, invalidated by content/width/column changes.
+  // Cached justified-row layout, invalidated by content/width/rowHeight changes.
   List<List<_JustifiedRow>>? _layoutCache;
   final List<({int section, int row})> _entries = [];
   double? _layoutWidth;
-  int? _layoutColumns;
-  bool? _layoutSquare;
+  double? _layoutRowHeight;
   int? _layoutVersion;
 
   @override
@@ -58,8 +54,7 @@ class _PhotoGridState extends State<PhotoGrid> {
   @override
   void didUpdateWidget(PhotoGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.columns != widget.columns ||
-        oldWidget.squareTiles != widget.squareTiles) {
+    if (oldWidget.targetRowHeight != widget.targetRowHeight) {
       _invalidateLayout();
       _captureAnchor(oldWidget);
     } else if (!identical(oldWidget.sections, widget.sections)) {
@@ -204,12 +199,10 @@ class _PhotoGridState extends State<PhotoGrid> {
             (provider) => provider.layoutVersion);
         if (_layoutCache == null ||
             _layoutWidth != width ||
-            _layoutColumns != widget.columns ||
-            _layoutSquare != widget.squareTiles ||
+            _layoutRowHeight != widget.targetRowHeight ||
             _layoutVersion != layoutVersion) {
           _layoutWidth = width;
-          _layoutColumns = widget.columns;
-          _layoutSquare = widget.squareTiles;
+          _layoutRowHeight = widget.targetRowHeight;
           _layoutVersion = layoutVersion;
           _layoutCache = [
             for (final section in widget.sections)
@@ -269,11 +262,11 @@ class _PhotoGridState extends State<PhotoGrid> {
             ),
             if (_showLabel && _activeLabel != null)
               Positioned(
-                right: 16,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: IgnorePointer(
+                left: 0,
+                right: 0,
+                top: 8,
+                child: IgnorePointer(
+                  child: Center(
                     child: Material(
                       color: Theme.of(context)
                           .colorScheme
@@ -303,33 +296,11 @@ class _PhotoGridState extends State<PhotoGrid> {
     );
   }
 
-  double _rowHeight(double containerWidth) {
-    // Immich-style: row height scales with zoom level and container width.
-    // Higher columns = smaller rows, lower columns = larger rows.
-    final colCount = math.max(1, widget.columns);
-    if (widget.squareTiles) {
-      return (containerWidth - (colCount - 1) * 2) / colCount;
-    }
-    // Justified mode: fixed row height based on zoom.
-    switch (widget.columns) {
-      case 0:
-        return 80;
-      case 1:
-        return 120;
-      case 2:
-        return 160;
-      case 3:
-        return 200;
-      default:
-        return 240;
-    }
-  }
-
   List<_JustifiedRow> _buildRows(
       List<PhotoItem> photos, double width, double hPadding, double spacing) {
     final provider = context.read<GalleryProvider>();
     final availableWidth = width - hPadding * 2;
-    final rowHeight = _rowHeight(width);
+    final rowHeight = widget.targetRowHeight;
     final rows = <_JustifiedRow>[];
     var currentRow = <_RowItem>[];
     var currentWidth = 0.0;

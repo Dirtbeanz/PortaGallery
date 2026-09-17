@@ -608,23 +608,22 @@ class GalleryProvider extends ChangeNotifier {
 
   String _pad(int n) => n.toString().padLeft(2, '0');
 
-  int columnsForZoom(double screenWidth) {
-    final wide = screenWidth > 600;
+  /// Target row height for the justified grid at each zoom level.
+  /// Strictly increasing: zoom 0 = most zoomed out, 4 = most zoomed in.
+  double rowHeightForZoom() {
     switch (_zoomLevel) {
       case 0:
-        return wide ? 16 : 12;
+        return 80;
       case 1:
-        return 8;
+        return 120;
       case 2:
-        return wide ? 5 : 4;
+        return 160;
       case 3:
-        return 3;
+        return 200;
       default:
-        return wide ? 3 : 2;
+        return 260;
     }
   }
-
-  bool get useSquareTiles => _zoomLevel < 4;
 
   Future<void> toggleFavorite(PhotoItem photo) async {
     final path = photo.path;

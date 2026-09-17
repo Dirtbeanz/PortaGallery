@@ -29,9 +29,7 @@ class _PhotosViewState extends State<PhotosView> {
     final provider = context.watch<GalleryProvider>();
 
     final sections = provider.dateSections;
-    final columns = provider.columnsForZoom(
-        MediaQuery.of(context).size.width);
-    final squareTiles = provider.useSquareTiles;
+    final rowHeight = provider.rowHeightForZoom();
 
     return Column(
       children: [
@@ -45,8 +43,7 @@ class _PhotosViewState extends State<PhotosView> {
         Expanded(
           child: PhotoGrid(
             sections: sections,
-            columns: columns,
-            squareTiles: squareTiles,
+            targetRowHeight: rowHeight,
             selectedPaths: _selected,
             onPhotoTap: _selectionMode ? _toggleSelect : _openViewer,
             onPhotoLongPress: _enterSelection,
