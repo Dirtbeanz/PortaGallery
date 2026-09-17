@@ -44,13 +44,17 @@ class PhotoService {
   static Future<List<PhotoItem>> scanDirectory(String rootPath,
       {bool showHidden = false}) async {
     final photos = <PhotoItem>[];
-    await _scan(Directory(rootPath), photos, rootPath, showHidden: showHidden);
+    final directories = <Directory>[Directory(p.absolute(rootPath))];
+    while (directories.isNotEmpty) {
+      final dir = directories.removeLast();
+      await _scan(dir, photos, rootPath, directories, showHidden: showHidden);
+    }
     photos.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
     return photos;
   }
 
   static Future<void> _scan(Directory dir, List<PhotoItem> out,
-      String rootPath, {bool showHidden = false}) async {
+      String rootPath, List<Directory> subdirs, {bool showHidden = false}) async {
     List<FileSystemEntity> entries;
     try {
       entries = await dir.list(followLinks: false).toList();
@@ -68,12 +72,11 @@ class PhotoService {
     }
 
     final rootAbs = p.absolute(rootPath);
-    final subdirs = <Directory>[];
     final files = <File>[];
 
     for (final entry in entries) {
       final name = p.basename(entry.path);
-      if (name.startsWith('.')) continue;
+      if (!showHidden && name.startsWith('.')) continue;
       if (entry is Directory) {
         subdirs.add(entry);
       } else if (entry is File && isSupported(entry.path)) {
@@ -86,50 +89,35 @@ class PhotoService {
       final batch = files.sublist(
           i, i + batchSize > files.length ? files.length : i + batchSize);
       await Future.wait(batch.map((file) async {
-        FileStat stat;
         try {
-          stat = await file.stat();
-        } catch (_) {
-          return;
-        }
+          final stat = await file.stat();
+          if (stat.type != FileSystemEntityType.file) return;
+          final parent = p.dirname(file.path);
+          final relative =
+              parent == rootAbs ? '' : p.relative(parent, from: rootAbs);
 
-        final parent = p.dirname(file.path);
-        final relative =
-            parent == rootAbs ? '' : p.relative(parent, from: rootAbs);
-
-        DateTime? dateTaken;
-        // EXIF date reading deferred to background enrichment.
-
-        out.add(PhotoItem(
-          path: file.path,
-          name: p.basename(file.path),
-          album: relative,
-          sizeBytes: stat.size,
-          modifiedAt: stat.modified,
-          dateTaken: dateTaken,
-          isVideo: isVideoPath(file.path),
-        ));
+          // EXIF date reading deferred to background enrichment.
+          out.add(PhotoItem(
+            path: file.path,
+            name: p.basename(file.path),
+            album: relative,
+            sizeBytes: stat.size,
+            modifiedAt: stat.modified,
+            isVideo: isVideoPath(file.path),
+          ));
+        } catch (_) {}
       }));
-    }
-
-    // Scan subdirectories in parallel (batches of 8 to avoid fd exhaustion).
-    const dirBatchSize = 8;
-    for (var i = 0; i < subdirs.length; i += dirBatchSize) {
-      final batch = subdirs.sublist(
-          i, i + dirBatchSize > subdirs.length ? subdirs.length : i + dirBatchSize);
-      await Future.wait(
-          batch.map((sub) => _scan(sub, out, rootAbs, showHidden: showHidden)));
     }
   }
 
   /// Lightweight EXIF date reader — only reads first 64KB of the file.
   /// Much faster than the full `exif` package which reads the entire file.
   static Future<DateTime?> readExifDateQuick(String path) async {
+    RandomAccessFile? raf;
     try {
       final file = File(path);
-      final raf = await file.open();
+      raf = await file.open();
       final header = await raf.read(65536);
-      await raf.close();
 
       if (header.length < 12) return null;
       // Only works for JPEG (starts with FF D8).
@@ -155,6 +143,10 @@ class PhotoService {
       return null;
     } catch (_) {
       return null;
+    } finally {
+      try {
+        await raf?.close();
+      } catch (_) {}
     }
   }
 
@@ -181,6 +173,16 @@ class PhotoService {
     } catch (_) {
       return null;
     }
+  }
+
+  static Future<Map<String, DateTime>> readExifDatesBulk(
+      List<String> paths) async {
+    final out = <String, DateTime>{};
+    for (final path in paths) {
+      final d = await readExifDateQuick(path);
+      if (d != null) out[path] = d;
+    }
+    return out;
   }
 
   static Future<void> importFile(String sourcePath, String libraryPath,
@@ -216,11 +218,11 @@ class PhotoService {
   }
 
   static (int, int)? readDimensions(String path) {
+    RandomAccessFile? raf;
     try {
       final file = File(path);
-      final raf = file.openSync();
+      raf = file.openSync();
       final header = raf.readSync(65536);
-      raf.closeSync();
       final bytes = header;
       if (bytes.length < 24) return null;
 
@@ -283,7 +285,12 @@ class PhotoService {
           if (h > 0) return (w, h);
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      try {
+        raf?.closeSync();
+      } catch (_) {}
+    }
 
     return null;
   }

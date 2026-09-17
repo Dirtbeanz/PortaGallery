@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -31,7 +30,7 @@ class GalleryProvider extends ChangeNotifier {
   Map<String, PhotoNotes> _notes = {};
   PhotoNotes getNotes(String path) => _notes[path] ?? const PhotoNotes();
 
-  Map<String, String> _thumbPaths = {};
+  final Map<String, String> _thumbPaths = {};
   String? thumbPathOrNull(PhotoItem photo) => _thumbPaths[photo.path];
   final Set<String> _thumbPending = {};
   final Set<String> _thumbInFlight = {};
@@ -47,6 +46,29 @@ class GalleryProvider extends ChangeNotifier {
   int get zoomLevel => _zoomLevel;
   final Map<String, double> _aspectRatios = {};
   Map<String, double> get aspectRatios => _aspectRatios;
+
+  int layoutVersion = 0;
+  bool _disposed = false;
+  int _generation = 0;
+  Future<void> _scanTask = Future<void>.value();
+  Future<void> _exifTask = Future<void>.value();
+  final Set<String> _thumbFailed = {};
+
+  bool _isCurrent(int generation) => !_disposed && generation == _generation;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _generation++;
+    _driveWatcher?.cancel();
+    _thumbPending.clear();
+    super.dispose();
+  }
 
   List<PhotoItem>? _visiblePhotosCache;
   bool _visiblePhotosDirty = true;
@@ -64,15 +86,19 @@ class GalleryProvider extends ChangeNotifier {
   SortMode sortMode = SortMode();
 
   Future<void> initialize() async {
+    final generation = _generation;
     await _config.load();
+    if (!_isCurrent(generation)) return;
     libraryPath = _config.libraryPath;
     isConfigured = _config.hasLibrary;
     _favoritePaths = await _database.getFavoritePaths();
     _notes = await _database.getAllNotes();
     _virtualAlbums = await _database.getVirtualAlbums();
+    if (!_isCurrent(generation)) return;
     if (isConfigured) {
       // Load cached photo list for instant UI, then rescan in background.
       final cached = await _database.loadPhotoCache();
+      if (!_isCurrent(generation)) return;
       if (cached != null && cached.isNotEmpty) {
         for (final photo in cached) {
           photo.isFavorite = _favoritePaths.contains(photo.path);
@@ -97,6 +123,7 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   void _startDriveWatcher() {
+    if (_disposed) return;
     _driveWatcher?.cancel();
     _driveWatcher = Timer.periodic(const Duration(seconds: 4), (_) async {
       final path = libraryPath;
@@ -115,6 +142,7 @@ class GalleryProvider extends ChangeNotifier {
 
   Future<void> setLibraryPath(String path) async {
     await _config.saveLibraryPath(path);
+    if (_disposed) return;
     libraryPath = path;
     isConfigured = _config.hasLibrary;
     await rescan();
@@ -126,39 +154,75 @@ class GalleryProvider extends ChangeNotifier {
     await rescan();
   }
 
-  Future<void> rescan() async {
+  Future<void> rescan() {
+    if (_disposed) return Future<void>.value();
+    final generation = ++_generation;
     final path = libraryPath;
-    if (path == null || path.isEmpty) {
-      _photos = [];
-      _albums = [];
-      isConfigured = false;
-      notifyListeners();
-      return;
-    }
-
-    // Drive not mounted: keep previous listing so the UI stays usable and
-    // show a "waiting for drive" state instead of wiping the library.
-    if (!Directory(path).existsSync()) {
-      _lastDrivePresent = false;
-      isConfigured = _config.hasLibrary;
-      isLoading = false;
-      notifyListeners();
-      return;
-    }
-    _lastDrivePresent = true;
-
+    final showHidden = _config.showHiddenFolders;
+    _thumbPending.clear();
     isLoading = true;
     notifyListeners();
+    _scanTask = _scanTask.then((_) => _rescan(generation, path, showHidden));
+    return _scanTask;
+  }
 
+  static Future<List<PhotoItem>> _scanPhotos(
+      ({String path, bool showHidden}) request) {
+    return PhotoService.scanDirectory(request.path,
+        showHidden: request.showHidden);
+  }
+
+  static bool _sameFile(PhotoItem a, PhotoItem b) =>
+      a.path == b.path &&
+      a.sizeBytes == b.sizeBytes &&
+      a.modifiedAt.millisecondsSinceEpoch == b.modifiedAt.millisecondsSinceEpoch;
+
+  Future<void> _rescan(int generation, String? path, bool showHidden) async {
+    if (!_isCurrent(generation)) return;
     try {
-      final showHidden = _config.showHiddenFolders;
+      if (path == null || path.isEmpty) {
+        _photos = [];
+        _photoIndex.clear();
+        _albums = [];
+        _thumbPaths.clear();
+        _thumbFailed.clear();
+        _aspectRatios.clear();
+        _sectionsDirty = true;
+        _visiblePhotosDirty = true;
+        _favoritesCache = null;
+        isConfigured = false;
+        return;
+      }
 
-      final scanned = await Isolate.run(
-          () => PhotoService.scanDirectory(path, showHidden: showHidden));
+      // Drive not mounted: keep previous listing so the UI stays usable and
+      // show a "waiting for drive" state instead of wiping the library.
+      if (!Directory(path).existsSync()) {
+        _lastDrivePresent = false;
+        isConfigured = _config.hasLibrary;
+        return;
+      }
+      _lastDrivePresent = true;
+      final scanned = await compute(
+          _scanPhotos, (path: path, showHidden: showHidden));
+      if (!_isCurrent(generation)) return;
 
+      final unchanged = <String>{};
+      var ratiosChanged = false;
       for (final photo in scanned) {
         photo.isFavorite = _favoritePaths.contains(photo.path);
+        final old = _photoIndex[photo.path];
+        if (old != null && _sameFile(old, photo)) {
+          unchanged.add(photo.path);
+          photo.dateTaken = old.dateTaken;
+          photo.aspectRatio = getAspectRatio(old);
+        } else if (old != null && getAspectRatio(old) != photo.aspectRatio) {
+          ratiosChanged = true;
+        }
       }
+      _thumbPaths.removeWhere((path, _) => !unchanged.contains(path));
+      _thumbFailed.removeWhere((path) => !unchanged.contains(path));
+      _aspectRatios.removeWhere((path, _) => !unchanged.contains(path));
+      if (ratiosChanged) layoutVersion++;
       _photos = scanned;
       _photoIndex = {for (final photo in scanned) photo.path: photo};
       _albums = _buildAlbums();
@@ -167,127 +231,178 @@ class GalleryProvider extends ChangeNotifier {
       _favoritesCache = null;
       isConfigured = true;
       // Persist scanned photos so next startup is instant.
-      _database.savePhotoCache(scanned);
-      await _loadExistingThumbnails();
+      try {
+        await _database.savePhotoCache(scanned);
+      } catch (_) {}
+      if (!_isCurrent(generation)) return;
+      try {
+        await _loadExistingThumbnails(generation);
+      } catch (_) {}
+      if (!_isCurrent(generation)) return;
+      _exifTask = _exifTask.then((_) => _enrichExifDates(generation));
+    } catch (_) {
     } finally {
-      isLoading = false;
-      notifyListeners();
-    }
-
-    // Enrich EXIF dates in background (fire-and-forget).
-    _enrichExifDates();
-  }
-
-  Future<void> _enrichExifDates() async {
-    const batchSize = 16;
-    var changed = false;
-    for (var i = 0; i < _photos.length; i += batchSize) {
-      final end = i + batchSize > _photos.length ? _photos.length : i + batchSize;
-      await Future.wait(_photos.sublist(i, end).map((photo) async {
-        if (photo.isVideo || photo.dateTaken != null) return;
-        final date = await PhotoService.readExifDateQuick(photo.path);
-        if (date != null) {
-          photo.dateTaken = date;
-          changed = true;
-        }
-      }));
-      await Future<void>.delayed(Duration.zero);
-    }
-    if (changed) {
-      _sectionsDirty = true;
-      notifyListeners();
+      if (_isCurrent(generation)) {
+        isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
-  Future<void> _loadExistingThumbnails() async {
-    final dir = await ThumbnailService.cacheDir();
-    final map = <String, String>{};
-    const batchSize = 50;
-    for (var i = 0; i < _photos.length; i += batchSize) {
-      final end = i + batchSize > _photos.length ? _photos.length : i + batchSize;
-      await Future.wait(_photos.sublist(i, end).map((photo) async {
-        final candidate =
-            p.join(dir.path, '${ThumbnailService.key(photo)}.jpg');
-        if (await File(candidate).exists()) {
-          map[photo.path] = candidate;
-          final dims = PhotoService.readDimensions(candidate);
-          if (dims != null && dims.$2 > 0) {
-            final ratio = dims.$1 / dims.$2;
-            _aspectRatios[photo.path] = ratio;
-            photo.aspectRatio = ratio;
+  Future<void> _enrichExifDates(int generation) async {
+    if (!_isCurrent(generation)) return;
+    try {
+      final candidates = _photos
+          .where((photo) =>
+              !photo.isVideo &&
+              photo.dateTaken == null &&
+              {'.jpg', '.jpeg', '.jpe', '.jfif'}.contains(
+                  p.extension(photo.path).toLowerCase()))
+          .toList();
+      const chunkSize = 200;
+      for (var i = 0; i < candidates.length; i += chunkSize) {
+        if (!_isCurrent(generation)) return;
+        final chunk = candidates.sublist(
+            i, i + chunkSize > candidates.length ? candidates.length : i + chunkSize);
+        final result = await compute(PhotoService.readExifDatesBulk,
+            chunk.map((photo) => photo.path).toList());
+        if (!_isCurrent(generation)) return;
+        var changed = false;
+        for (final photo in chunk) {
+          if (!identical(_photoIndex[photo.path], photo)) continue;
+          final date = result[photo.path];
+          if (date != null && photo.dateTaken != date) {
+            photo.dateTaken = date;
+            changed = true;
           }
         }
+        if (changed) {
+          _sectionsDirty = true;
+          _visiblePhotosDirty = true;
+          if (sortMode.field == SortField.dateTaken) notifyListeners();
+        }
+      }
+    } catch (_) {}
+  }
+
+  static Future<(Map<String, String>, Map<String, double>)> _readCachedThumbnails(
+      ({String directory, List<({String path, String key})> entries}) request) async {
+    final paths = <String, String>{};
+    final ratios = <String, double>{};
+    const batchSize = 24;
+    final entries = request.entries;
+    for (var i = 0; i < entries.length; i += batchSize) {
+      final batch = entries.sublist(
+          i, i + batchSize > entries.length ? entries.length : i + batchSize);
+      await Future.wait(batch.map((entry) async {
+        final candidate = p.join(request.directory, '${entry.key}.jpg');
+        try {
+          final stat = await File(candidate).stat();
+          if (stat.type == FileSystemEntityType.file && stat.size > 0) {
+            final dims = PhotoService.readDimensions(candidate);
+            if (dims != null && dims.$1 > 0 && dims.$2 > 0) {
+              paths[entry.path] = candidate;
+              ratios[entry.path] = dims.$1 / dims.$2;
+            }
+          }
+        } catch (_) {}
       }));
-      // Yield to the event loop so the UI stays responsive.
-      await Future<void>.delayed(Duration.zero);
     }
-    _thumbPaths = map;
-    _thumbPending.clear();
+    return (paths, ratios);
+  }
+
+  Future<void> _loadExistingThumbnails(int generation) async {
+    final snapshot = List<PhotoItem>.of(_photos);
+    final dir = await ThumbnailService.cacheDir();
+    if (!_isCurrent(generation)) return;
+    final entries = [
+      for (final photo in snapshot)
+        (path: photo.path, key: ThumbnailService.key(photo)),
+    ];
+    final (paths, ratios) = await compute(
+        _readCachedThumbnails, (directory: dir.path, entries: entries));
+    if (!_isCurrent(generation)) return;
+    for (final photo in snapshot) {
+      if (!identical(_photoIndex[photo.path], photo)) continue;
+      final target = paths[photo.path];
+      if (target == null || _thumbPaths.containsKey(photo.path)) continue;
+      _thumbPaths[photo.path] = target;
+      _thumbFailed.remove(photo.path);
+      final ratio = ratios[photo.path];
+      if (ratio != null) _setAspectRatio(photo, ratio);
+    }
+  }
+
+  void _setAspectRatio(PhotoItem photo, double ratio) {
+    if (!ratio.isFinite || ratio <= 0) return;
+    if (getAspectRatio(photo) != ratio) layoutVersion++;
+    _aspectRatios[photo.path] = ratio;
+    photo.aspectRatio = ratio;
   }
 
   void requestThumbnails(List<PhotoItem> photos) {
+    if (_disposed || isLoading) return;
     var added = false;
     for (final photo in photos) {
+      final current = _photoIndex[photo.path];
+      if (current == null || !_sameFile(current, photo)) continue;
       if (_thumbPaths.containsKey(photo.path)) continue;
+      if (_thumbFailed.contains(photo.path)) continue;
       if (_thumbPending.contains(photo.path)) continue;
       if (_thumbInFlight.contains(photo.path)) continue;
       _thumbPending.add(photo.path);
       added = true;
     }
-    if (added) {
-      _drainThumbQueue();
-    }
+    if (added) _drainThumbQueue();
   }
 
   Future<void> _drainThumbQueue() async {
-    if (_thumbing) return;
+    if (_thumbing || _disposed) return;
     _thumbing = true;
     var changed = 0;
     try {
-      while (_thumbPending.isNotEmpty) {
-        // Collect a batch of pending paths.
-        final batch = <String>[];
+      while (!_disposed && !isLoading && _thumbPending.isNotEmpty) {
+        final generation = _generation;
+        final batch = <PhotoItem>[];
         while (batch.length < 3 && _thumbPending.isNotEmpty) {
           final path = _thumbPending.first;
           _thumbPending.remove(path);
           final photo = _photoIndex[path];
-          if (photo == null) continue;
+          if (photo == null || _thumbPaths.containsKey(path) ||
+              _thumbFailed.contains(path)) {
+            continue;
+          }
           _thumbInFlight.add(path);
-          batch.add(path);
+          batch.add(photo);
         }
-        if (batch.isEmpty) continue;
-
-        // Generate thumbnails in parallel.
-        final results = await Future.wait(batch.map((path) async {
-          final photo = _photoIndex[path]!;
+        await Future.wait(batch.map((photo) async {
+          final path = photo.path;
+          String? target;
+          double? ratio;
           try {
-            final ok = await ThumbnailService.generate(photo);
-            if (ok) {
-              final target = await ThumbnailService.expectedPath(photo);
-              if (await File(target).exists()) {
-                final dims = PhotoService.readDimensions(target);
-                double? ratio;
-                if (dims != null && dims.$2 > 0) {
-                  ratio = dims.$1 / dims.$2;
-                  _aspectRatios[path] = ratio;
-                  photo.aspectRatio = ratio;
-                }
-                return (path: path, target: target);
+            if (await ThumbnailService.generate(photo)) {
+              final candidate = await ThumbnailService.expectedPath(photo);
+              final dims = PhotoService.readDimensions(candidate);
+              if (dims != null && dims.$1 > 0 && dims.$2 > 0) {
+                target = candidate;
+                ratio = dims.$1 / dims.$2;
               }
             }
+          } catch (_) {
           } finally {
             _thumbInFlight.remove(path);
           }
-          return null;
-        }));
-
-        for (final r in results) {
-          if (r != null) {
-            _thumbPaths[r.path] = r.target;
+          if (!_isCurrent(generation) || !identical(_photoIndex[path], photo)) {
+            return;
+          }
+          if (target == null) {
+            _thumbFailed.add(path);
+          } else {
+            _thumbPaths[path] = target;
+            if (ratio != null) _setAspectRatio(photo, ratio);
             changed++;
           }
-        }
-
+        }));
         // Batch notifications to avoid re-laying out the grid on every thumbnail.
         if (changed >= 12) {
           notifyListeners();
@@ -296,7 +411,7 @@ class GalleryProvider extends ChangeNotifier {
       }
     } finally {
       _thumbing = false;
-      if (changed > 0) notifyListeners();
+      notifyListeners();
     }
   }
 
@@ -312,7 +427,7 @@ class GalleryProvider extends ChangeNotifier {
         for (final entity in Directory(libPath).listSync(followLinks: false)) {
           if (entity is Directory) {
             final name = p.basename(entity.path);
-            if (name.startsWith('.')) continue;
+            if (!showHiddenFolders && name.startsWith('.')) continue;
             map.putIfAbsent(name, () => []);
           }
         }
@@ -407,15 +522,12 @@ class GalleryProvider extends ChangeNotifier {
   double getAspectRatio(PhotoItem photo) {
     final cached = _aspectRatios[photo.path];
     if (cached != null) return cached;
-    // Return default and let thumbnail generation populate the real ratio.
-    // Avoids reading the full original file which is very slow for large libraries.
-    return 1.0;
+    return photo.aspectRatio;
   }
 
   List<({String header, List<PhotoItem> photos})> get dateSections {
     if (_sectionsDirty || _sectionsCache == null) {
-      final source = showFavoritesOnly ? favorites : _photos;
-      _sectionsCache = buildDateSections(_applySort(_applySearch(source)));
+      _sectionsCache = buildDateSections(visiblePhotos);
       _sectionsDirty = false;
     }
     return _sectionsCache!;
@@ -430,12 +542,16 @@ class GalleryProvider extends ChangeNotifier {
 
     final groups = <String, List<PhotoItem>>{};
     for (final photo in list) {
-      final key = dateKey(photo.modifiedAt);
+      final key = dateKey(sortMode.field == SortField.dateTaken
+          ? photo.dateTaken ?? photo.modifiedAt
+          : photo.modifiedAt);
       groups.putIfAbsent(key, () => []).add(photo);
     }
 
     final entries = groups.entries.toList()
-      ..sort((a, b) => b.key.compareTo(a.key));
+      ..sort((a, b) => sortMode.order == SortOrder.ascending
+          ? a.key.compareTo(b.key)
+          : b.key.compareTo(a.key));
 
     return entries
         .map((e) => (header: _sectionLabel(e.key), photos: e.value))
@@ -517,6 +633,7 @@ class GalleryProvider extends ChangeNotifier {
         _favoritePaths.remove(photo.path);
       }
     }
+    _sectionsDirty = true;
     _visiblePhotosDirty = true;
     _favoritesCache = null;
     notifyListeners();
@@ -527,6 +644,8 @@ class GalleryProvider extends ChangeNotifier {
         tags.map((t) => t.trim()).where((t) => t.isNotEmpty).toList();
     final notes = PhotoNotes(tags: trimmedTags, comment: comment.trim());
     _notes[path] = notes;
+    _sectionsDirty = true;
+    _visiblePhotosDirty = true;
     await _database.saveNotes(path, trimmedTags, comment);
     notifyListeners();
   }

@@ -12,7 +12,6 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 
 import '../models/photo_item.dart';
 
-
 class ThumbnailService {
   static Directory? _dir;
 
@@ -44,106 +43,208 @@ class ThumbnailService {
   }
 
   static Future<bool> generate(PhotoItem photo) async {
-    final target = await expectedPath(photo);
-    if (await File(target).exists()) return true;
+    Directory? temporary;
     try {
-      if (photo.isVideo) {
-        return _videoFrame(photo, target);
-      } else {
-        return _imageThumb(photo, target);
+      final target = await expectedPath(photo);
+      if (await File(target).exists()) return true;
+      temporary = await Directory(p.dirname(target)).createTemp('thumb-');
+      final output = p.join(temporary.path, 'thumbnail.jpg');
+      final ok =
+          photo.isVideo
+              ? await _videoFrame(photo, output)
+              : await _imageThumb(photo, output);
+      if (!ok ||
+          !await File(output).exists() ||
+          await File(output).length() == 0) {
+        return false;
       }
+      await File(output).rename(target);
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      try {
+        await temporary?.delete(recursive: true);
+      } catch (_) {}
+    }
+  }
+
+  static Future<bool> _imageThumb(PhotoItem photo, String target) async {
+    if (await _imageThumbFlutter(photo.path, target)) return true;
+    if (!kIsWeb && Platform.isAndroid) {
+      return await _compressPlatform(photo.path, target);
+    }
+    return await _magickThumb(photo.path, target);
+  }
+
+  static Future<bool> _imageThumbFlutter(String source, String target) async {
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.Image? image;
+    late final ByteData rgba;
+    late final int w;
+    late final int h;
+    try {
+      buffer = await ui.ImmutableBuffer.fromFilePath(source);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final width = descriptor.width;
+      final height = descriptor.height;
+      if (width <= 0 ||
+          height <= 0 ||
+          width > 100000 ||
+          height > 100000 ||
+          width * height > 200000000) {
+        return false;
+      }
+      final longest = width > height ? width : height;
+      final scale = longest > 320 ? 320 / longest : 1.0;
+      codec = await descriptor.instantiateCodec(
+        targetWidth: (width * scale).round().clamp(1, 320),
+        targetHeight: (height * scale).round().clamp(1, 320),
+      );
+      image = (await codec.getNextFrame()).image;
+      w = image.width;
+      h = image.height;
+      if (w <= 0 || h <= 0 || w > 320 || h > 320) return false;
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (data == null) return false;
+      rgba = data;
+    } catch (_) {
+      return false;
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer?.dispose();
+    }
+    try {
+      final encoded = await Isolate.run(() {
+        final decoded = img.Image.fromBytes(
+          width: w,
+          height: h,
+          bytes: rgba.buffer,
+          bytesOffset: rgba.offsetInBytes,
+          order: img.ChannelOrder.rgba,
+        );
+        return Uint8List.fromList(img.encodeJpg(decoded, quality: 70));
+      });
+      await File(target).writeAsBytes(encoded, flush: true);
+      return true;
     } catch (_) {
       return false;
     }
   }
 
-  static Future<bool> _imageThumb(PhotoItem photo, String target) async {
-    try {
-      final bytes = await File(photo.path).readAsBytes();
-      final codec = await ui.instantiateImageCodec(
-        bytes,
-        targetWidth: 320,
-        allowUpscaling: false,
-      );
-      try {
-        final frame = await codec.getNextFrame();
-        final w = frame.image.width;
-        final h = frame.image.height;
-        final rgba = await frame.image.toByteData(
-          format: ui.ImageByteFormat.rawRgba,
-        );
-        frame.image.dispose();
-        if (rgba == null) return false;
-        final buf = rgba.buffer;
-
-        // Flutter's codec already applies EXIF orientation — the decoded
-        // RGBA pixels have the correct display orientation, so no manual
-        // rotation is needed.
-        final encoded = await Isolate.run(() {
-          final decoded = img.Image.fromBytes(
-            width: w,
-            height: h,
-            bytes: buf,
-            order: img.ChannelOrder.rgba,
-          );
-          return Uint8List.fromList(img.encodeJpg(decoded, quality: 70));
-        });
-
-        await File(target).writeAsBytes(encoded, flush: true);
-        return true;
-      } finally {
-        codec.dispose();
-      }
-    } catch (_) {
-      // Flutter's codec can't decode RAW/HEIC; fall back to platform codecs
-      // or system tools.
-      if (!kIsWeb && Platform.isAndroid) {
-        final ok = await _compressPlatform(photo.path, target);
-        if (ok) return true;
-      }
-      return _magickThumb(photo.path, target);
-    }
-  }
-
   static Future<bool> _compressPlatform(String source, String target) async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    final intermediate = File('$target.platform.jpg');
     try {
       final result = await FlutterImageCompress.compressAndGetFile(
         source,
-        target,
+        intermediate.path,
         format: CompressFormat.jpeg,
         quality: 70,
         minWidth: 320,
         minHeight: 320,
       );
-      if (result != null && await File(result.path).exists()) return true;
-    } catch (_) {}
+      if (result != null) {
+        return await _imageThumbFlutter(result.path, target);
+      }
+    } catch (_) {
+      return false;
+    } finally {
+      try {
+        if (await intermediate.exists()) await intermediate.delete();
+      } catch (_) {}
+    }
     return false;
   }
 
-  static Future<bool> _magickThumb(String source, String target) async {
-    if (kIsWeb) return false;
+  static Future<bool> _runCommand(String executable, List<String> args) async {
+    Process? process;
+    StreamSubscription<List<int>>? stdout;
+    StreamSubscription<List<int>>? stderr;
+    int? exitCode;
     try {
-      for (final exe in ['magick', 'convert', 'heif-convert']) {
-        final args = exe == 'heif-convert'
-            ? [source, target]
-            : [
-                '$source[0]',
-                '-auto-orient',
-                '-thumbnail',
-                '320x320>',
-                '-quality',
-                '70',
-                target,
-              ];
-        final result = await Process.run(exe, args);
-        if (result.exitCode == 0 && await File(target).exists()) {
-          return true;
-        }
-      }
-      return false;
+      process = await Process.start(executable, args);
+      final stdoutDone = Completer<void>();
+      final stderrDone = Completer<void>();
+      stdout = process.stdout.listen(
+        (_) {},
+        onDone: stdoutDone.complete,
+        onError: stdoutDone.completeError,
+        cancelOnError: true,
+      );
+      stderr = process.stderr.listen(
+        (_) {},
+        onDone: stderrDone.complete,
+        onError: stderrDone.completeError,
+        cancelOnError: true,
+      );
+      await Future.wait([
+        process.stdin.close(),
+        process.exitCode.then((code) {
+          exitCode = code;
+        }),
+        stdoutDone.future,
+        stderrDone.future,
+      ], eagerError: true).timeout(const Duration(seconds: 20));
+      return exitCode == 0;
     } catch (_) {
       return false;
+    } finally {
+      if (process != null && exitCode == null) {
+        process.kill(
+          Platform.isWindows ? ProcessSignal.sigterm : ProcessSignal.sigkill,
+        );
+        try {
+          await process.exitCode.timeout(const Duration(seconds: 5));
+        } catch (_) {}
+      }
+      await stdout?.cancel();
+      await stderr?.cancel();
     }
+  }
+
+  static Future<bool> _magickThumb(String source, String target) async {
+    if (kIsWeb || Platform.isAndroid) return false;
+    for (final exe in ['magick', 'convert', 'heif-thumbnailer']) {
+      final intermediate = File('$target.$exe.png');
+      try {
+        final args =
+            exe == 'heif-thumbnailer'
+                ? ['-s', '320', source, intermediate.path]
+                : [
+                  '-limit',
+                  'thread',
+                  '1',
+                  '-limit',
+                  'memory',
+                  '128MiB',
+                  '-limit',
+                  'map',
+                  '256MiB',
+                  '$source[0]',
+                  '-auto-orient',
+                  '-thumbnail',
+                  '320x320>',
+                  '-quality',
+                  '70',
+                  intermediate.path,
+                ];
+        if (await _runCommand(exe, args) &&
+            await _imageThumbFlutter(intermediate.path, target)) {
+          return true;
+        }
+      } catch (_) {
+      } finally {
+        try {
+          if (await intermediate.exists()) await intermediate.delete();
+        } catch (_) {}
+      }
+    }
+    return false;
   }
 
   static Future<bool> _videoFrame(PhotoItem photo, String target) async {
@@ -152,6 +253,7 @@ class ThumbnailService {
         video: photo.path,
         imageFormat: ImageFormat.JPEG,
         maxWidth: 320,
+        maxHeight: 320,
         quality: 70,
         timeMs: 1000,
       );
@@ -162,16 +264,33 @@ class ThumbnailService {
 
     if (!kIsWeb &&
         (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
-      final result = await Process.run('ffmpeg', [
-        '-ss', '1',
-        '-i', photo.path,
-        '-frames:v', '1',
-        '-vf', 'scale=320:-2',
-        '-q:v', '5',
+      return await _runCommand('ffmpeg', [
+        '-nostdin',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-threads',
+        '1',
+        '-filter_threads',
+        '1',
+        '-filter_complex_threads',
+        '1',
+        '-ss',
+        '1',
+        '-i',
+        photo.path,
+        '-frames:v',
+        '1',
+        '-an',
+        '-vf',
+        "scale=w='min(320,iw)':h='min(320,ih)':force_original_aspect_ratio=decrease",
+        '-threads',
+        '1',
+        '-q:v',
+        '5',
         '-y',
         target,
       ]);
-      return result.exitCode == 0 && await File(target).exists();
     }
 
     return false;

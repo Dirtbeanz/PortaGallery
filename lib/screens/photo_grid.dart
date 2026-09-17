@@ -41,6 +41,12 @@ class _PhotoGridState extends State<PhotoGrid> {
   bool _showLabel = false;
   List<double> _sectionStarts = [];
   String? _pendingAnchor;
+  // Cached justified-row layout, invalidated by content/width/column changes.
+  List<List<_JustifiedRow>>? _layoutCache;
+  double? _layoutWidth;
+  int? _layoutColumns;
+  bool? _layoutSquare;
+  int? _layoutVersion;
 
   @override
   void initState() {
@@ -53,7 +59,10 @@ class _PhotoGridState extends State<PhotoGrid> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.columns != widget.columns ||
         oldWidget.squareTiles != widget.squareTiles) {
+      _invalidateLayout();
       _captureAnchor(oldWidget);
+    } else if (!identical(oldWidget.sections, widget.sections)) {
+      _invalidateLayout();
     }
   }
 
@@ -65,17 +74,29 @@ class _PhotoGridState extends State<PhotoGrid> {
     super.dispose();
   }
 
+  void _invalidateLayout() {
+    _layoutCache = null;
+  }
+
   void _captureAnchor(PhotoGrid oldWidget) {
     if (!_scrollController.hasClients) return;
-    if (oldWidget.sections.isEmpty) return;
-    final offset = _scrollController.offset;
-    for (var i = 0; i < _sectionStarts.length; i++) {
-      if (_sectionStarts[i] <= offset + 8) {
-        _pendingAnchor = oldWidget.sections[i].photos.isNotEmpty
-            ? oldWidget.sections[i].photos.first.path
-            : null;
+    if (oldWidget.sections.isEmpty || _sectionStarts.isEmpty) return;
+    final offset = _scrollController.offset + 8;
+    var lo = 0;
+    var hi = _sectionStarts.length - 1;
+    var index = -1;
+    while (lo <= hi) {
+      final mid = (lo + hi) >> 1;
+      if (_sectionStarts[mid] <= offset) {
+        index = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
       }
     }
+    if (index < 0 || index >= oldWidget.sections.length) return;
+    final photos = oldWidget.sections[index].photos;
+    _pendingAnchor = photos.isNotEmpty ? photos.first.path : null;
   }
 
   void _restoreAnchor() {
@@ -101,9 +122,19 @@ class _PhotoGridState extends State<PhotoGrid> {
   void _onScroll() {
     if (_sectionStarts.isEmpty) return;
     final offset = _scrollController.offset + 60;
+    // Binary search — the linear scan ran on every scroll frame and got
+    // expensive with thousands of day-sections.
+    var lo = 0;
+    var hi = _sectionStarts.length - 1;
     var index = 0;
-    for (var i = 0; i < _sectionStarts.length; i++) {
-      if (_sectionStarts[i] <= offset) index = i;
+    while (lo <= hi) {
+      final mid = (lo + hi) >> 1;
+      if (_sectionStarts[mid] <= offset) {
+        index = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
     }
     if (index >= widget.sections.length) return;
     final label = widget.sections[index].header;
@@ -164,17 +195,37 @@ class _PhotoGridState extends State<PhotoGrid> {
         const hPadding = 2.0;
         final width = constraints.maxWidth;
 
-        // Estimate section starts using average row height (don't compute exact rows).
+        // Rebuild layout rows only when content, width, or zoom changed.
+        // Previously this recomputed rows for ALL 18k photos on every
+        // rebuild (e.g. every batch of generated thumbnails) — the single
+        // biggest source of scroll/zoom jank.
+        final layoutVersion = context.select<GalleryProvider, int>(
+            (provider) => provider.layoutVersion);
+        if (_layoutCache == null ||
+            _layoutWidth != width ||
+            _layoutColumns != widget.columns ||
+            _layoutSquare != widget.squareTiles ||
+            _layoutVersion != layoutVersion) {
+          _layoutWidth = width;
+          _layoutColumns = widget.columns;
+          _layoutSquare = widget.squareTiles;
+          _layoutVersion = layoutVersion;
+          _layoutCache = [
+            for (final section in widget.sections)
+              _buildRows(section.photos, width, hPadding, spacing),
+          ];
+        }
+        final layout = _layoutCache!;
+
+        // Estimate section starts using actual row heights.
         _sectionStarts = [];
         var acc = 0.0;
-        final rowHeight = _rowHeight(width);
-        final availableWidth = width - hPadding * 2;
-        final avgPhotosPerRow = (availableWidth / rowHeight).clamp(1.0, 20.0);
-        for (final section in widget.sections) {
+        for (var s = 0; s < widget.sections.length; s++) {
           _sectionStarts.add(acc);
           acc += 46; // header
-          final rows = (section.photos.length / avgPhotosPerRow).ceil();
-          acc += rows * (rowHeight + spacing);
+          for (final row in layout[s]) {
+            acc += row.height + spacing;
+          }
         }
 
         if (_pendingAnchor != null) {
@@ -194,13 +245,13 @@ class _PhotoGridState extends State<PhotoGrid> {
                 controller: _scrollController,
                 cacheExtent: 800,
                 slivers: [
-                  for (final section in widget.sections) ...[
+                  for (var s = 0; s < widget.sections.length; s++) ...[
                     SliverToBoxAdapter(
-                        child: _DateHeader(label: section.header)),
+                        child: _DateHeader(label: widget.sections[s].header)),
                     _buildJustifiedSection(
                       context,
-                      section.photos,
-                      width,
+                      widget.sections[s].photos,
+                      layout[s],
                       hPadding,
                       spacing,
                     ),
@@ -308,12 +359,11 @@ class _PhotoGridState extends State<PhotoGrid> {
   Widget _buildJustifiedSection(
     BuildContext context,
     List<PhotoItem> photos,
-    double width,
+    List<_JustifiedRow> rows,
     double hPadding,
     double spacing,
   ) {
     final provider = context.read<GalleryProvider>();
-    final rows = _buildRows(photos, width, hPadding, spacing);
 
     return SliverPadding(
       padding: EdgeInsets.symmetric(horizontal: hPadding),
