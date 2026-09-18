@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -34,7 +36,7 @@ void main() {
       for (final width in [400.0, 1000.0]) {
         await tester.binding.setSurfaceSize(Size(width, 700));
         previousHeight = 0;
-        for (var zoom = 0; zoom < 5; zoom++) {
+        for (var zoom = 0; zoom < 4; zoom++) {
           provider.setZoom(zoom);
           final height = provider.rowHeightForZoom();
           expect(height, greaterThan(previousHeight));
@@ -50,9 +52,15 @@ void main() {
           final tiles = tester.widgetList<SizedBox>(find.byType(SizedBox))
               .where((box) => box.child is RepaintBoundary && box.width != null);
           expect(tiles, isNotEmpty);
+          final available = width - 4;
+          final wide = math.min(1.5 * height, available);
+          final narrow = math.min(0.5 * height, available);
           for (final tile in tiles) {
             expect(tile.height, height);
-            expect(tile.width! / height, anyOf(closeTo(1.5, 0.001), closeTo(0.5, 0.001)));
+            expect(
+              tile.width,
+              anyOf(closeTo(wide, 0.001), closeTo(narrow, 0.001)),
+            );
           }
           expect(tester.takeException(), isNull);
         }

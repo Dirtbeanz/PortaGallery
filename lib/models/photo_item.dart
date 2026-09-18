@@ -90,7 +90,7 @@ class SortMode {
   SortField field;
   SortOrder order;
 
-  SortMode({this.field = SortField.dateModified, this.order = SortOrder.descending});
+  SortMode({this.field = SortField.dateTaken, this.order = SortOrder.descending});
 
   String get label {
     final fieldName = switch (field) {

@@ -529,7 +529,10 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   void setZoom(int level) {
-    _zoomLevel = level.clamp(0, 4);
+    final clamped = level.clamp(0, 3);
+    if (clamped == _zoomLevel) return;
+    _zoomLevel = clamped;
+    _sectionsDirty = true;
     notifyListeners();
   }
 
@@ -580,6 +583,8 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   String dateKey(DateTime dt) {
+    if (_zoomLevel <= 0) return '${dt.year}';
+    if (_zoomLevel == 1) return '${dt.year}-${_pad(dt.month)}';
     return '${dt.year}-${_pad(dt.month)}-${_pad(dt.day)}';
   }
 
@@ -588,8 +593,14 @@ class GalleryProvider extends ChangeNotifier {
     'July', 'August', 'September', 'October', 'November', 'December',
   ];
 
+  static const List<String> _weekdayNames = [
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+    'Sunday',
+  ];
+
   String _sectionLabel(String key) {
     final parts = key.split('-');
+    if (parts.length == 1) return parts[0];
     if (parts.length == 2) {
       final month = int.tryParse(parts[1]);
       if (month != null && month >= 1 && month <= 12) {
@@ -599,8 +610,11 @@ class GalleryProvider extends ChangeNotifier {
     if (parts.length == 3) {
       final month = int.tryParse(parts[1]);
       final day = int.tryParse(parts[2]);
-      if (month != null && day != null && month >= 1 && month <= 12) {
-        return '${_monthNames[month - 1]} $day, ${parts[0]}';
+      final date = DateTime.tryParse(key);
+      if (month != null && day != null && date != null &&
+          month >= 1 && month <= 12) {
+        return '${_weekdayNames[date.weekday - 1]}, '
+            '${_monthNames[month - 1]} $day, ${parts[0]}';
       }
     }
     return key;
@@ -609,19 +623,17 @@ class GalleryProvider extends ChangeNotifier {
   String _pad(int n) => n.toString().padLeft(2, '0');
 
   /// Target row height for the justified grid at each zoom level.
-  /// Strictly increasing: zoom 0 = most zoomed out, 4 = most zoomed in.
+  /// Strictly increasing: zoom 0 = most zoomed out, 3 = most zoomed in.
   double rowHeightForZoom() {
     switch (_zoomLevel) {
       case 0:
-        return 80;
+        return 100;
       case 1:
-        return 120;
-      case 2:
         return 160;
-      case 3:
-        return 200;
+      case 2:
+        return 230;
       default:
-        return 260;
+        return 300;
     }
   }
 

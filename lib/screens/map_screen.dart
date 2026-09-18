@@ -1,14 +1,28 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import '../models/photo_item.dart';
 import '../providers/gallery_provider.dart';
 import '../services/metadata_service.dart';
 import 'photo_viewer_screen.dart';
+
+typedef _GeoPoint = ({PhotoItem photo, double lat, double lon});
+
+Future<List<(String, double?, double?)>> _scanGpsBatch(
+    List<String> paths) async {
+  final out = <(String, double?, double?)>[];
+  for (final path in paths) {
+    final gps = await MetadataService.readGps(path);
+    out.add((path, gps?.$1, gps?.$2));
+  }
+  return out;
+}
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -18,11 +32,18 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  List<({PhotoItem photo, double lat, double lon})> _points = [];
+  static const Set<String> _gpsExtensions = {
+    '.jpg', '.jpeg', '.jpe', '.jfif', '.tif', '.tiff',
+  };
+
+  List<_GeoPoint> _points = [];
+  List<_GeoPoint> _visiblePoints = [];
   bool _scanning = false;
   int _scanned = 0;
+  int _total = 0;
   final MapController _mapController = MapController();
   bool _focused = false;
+  bool _mapReady = false;
 
   @override
   void initState() {
@@ -38,27 +59,55 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _scan() async {
     final provider = context.read<GalleryProvider>();
-    final photos = provider.photos.where((p) => !p.isVideo).toList();
+    final photos = provider.photos
+        .where((photo) =>
+            !photo.isVideo &&
+            _gpsExtensions.contains(p.extension(photo.path).toLowerCase()))
+        .toList();
+
+    final photoByPath = {for (final photo in photos) photo.path: photo};
+    final knownPoints = <_GeoPoint>[];
+    final toScan = <String>[];
+    for (final photo in photos) {
+      if (MetadataService.hasGpsCache(photo.path)) {
+        final gps = MetadataService.cachedGps(photo.path);
+        if (gps != null) {
+          knownPoints.add((photo: photo, lat: gps.$1, lon: gps.$2));
+        }
+      } else {
+        toScan.add(photo.path);
+      }
+    }
+
     setState(() {
       _scanning = true;
-      _scanned = 0;
-      _points = [];
+      _scanned = photos.length - toScan.length;
+      _total = photos.length;
+      _points = knownPoints;
+      _visiblePoints = knownPoints;
       _focused = false;
     });
+    if (_mapReady && knownPoints.isNotEmpty) {
+      _updateVisiblePoints(_mapController.camera);
+    }
 
-    const batch = 16;
-    for (var i = 0; i < photos.length; i += batch) {
-      final chunk = photos.sublist(
-          i, i + batch > photos.length ? photos.length : i + batch);
-      final results = await Future.wait(chunk.map((p) async {
-        final gps = await MetadataService.readGps(p.path);
-        if (gps == null) return null;
-        return (photo: p, lat: gps.$1, lon: gps.$2);
-      }));
+    const batch = 250;
+    for (var i = 0; i < toScan.length; i += batch) {
+      final chunk = toScan.sublist(
+          i, i + batch > toScan.length ? toScan.length : i + batch);
+      final results = await compute(_scanGpsBatch, chunk);
       if (!mounted) return;
-      final newPoints = <({PhotoItem photo, double lat, double lon})>[];
-      for (final r in results) {
-        if (r != null) newPoints.add(r);
+      final newPoints = <_GeoPoint>[];
+      for (final (path, lat, lon) in results) {
+        if (lat != null && lon != null) {
+          MetadataService.cacheGps(path, (lat, lon));
+          final photo = photoByPath[path];
+          if (photo != null) {
+            newPoints.add((photo: photo, lat: lat, lon: lon));
+          }
+        } else {
+          MetadataService.cacheGps(path, null);
+        }
       }
       setState(() {
         _points.addAll(newPoints);
@@ -77,17 +126,35 @@ class _MapScreenState extends State<MapScreen> {
         });
       }
 
-      // Yield to event loop for responsive UI.
+      if (_mapReady) _updateVisiblePoints(_mapController.camera);
       await Future<void>.delayed(Duration.zero);
     }
 
     if (mounted) setState(() => _scanning = false);
   }
 
+  void _updateVisiblePoints(MapCamera camera) {
+    if (_points.isEmpty) {
+      if (_visiblePoints.isNotEmpty) {
+        setState(() => _visiblePoints = []);
+      }
+      return;
+    }
+    final bounds = camera.visibleBounds;
+    final visible = <_GeoPoint>[];
+    for (final point in _points) {
+      if (bounds.contains(LatLng(point.lat, point.lon))) visible.add(point);
+    }
+    final unchanged = visible.length == _visiblePoints.length &&
+        (visible.isEmpty ||
+            (visible.first.photo.path == _visiblePoints.first.photo.path &&
+                visible.last.photo.path == _visiblePoints.last.photo.path));
+    if (unchanged) return;
+    setState(() => _visiblePoints = visible);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final provider = context.read<GalleryProvider>();
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Map'),
@@ -101,9 +168,7 @@ class _MapScreenState extends State<MapScreen> {
                   height: 20,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    value: provider.photos.isEmpty
-                        ? null
-                        : _scanned / provider.photos.length,
+                    value: _total == 0 ? null : _scanned / _total,
                   ),
                 ),
               ),
@@ -122,6 +187,13 @@ class _MapScreenState extends State<MapScreen> {
               ? const LatLng(20, 0)
               : LatLng(_points.first.lat, _points.first.lon),
           initialZoom: _points.isEmpty ? 2 : 6,
+          onMapReady: () {
+            _mapReady = true;
+            _updateVisiblePoints(_mapController.camera);
+          },
+          onPositionChanged: (camera, hasGesture) {
+            _updateVisiblePoints(camera);
+          },
           interactionOptions: const InteractionOptions(
             flags: InteractiveFlag.all,
           ),
@@ -133,7 +205,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
           MarkerLayer(
             markers: [
-              for (final point in _points)
+              for (final point in _visiblePoints)
                 Marker(
                   point: LatLng(point.lat, point.lon),
                   width: 36,

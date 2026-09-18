@@ -10,20 +10,23 @@ experience — albums, favorites, search, zoom, tags, and more.
 
 ## Features
 
-- **Gallery grid with 5 zoom levels** — zoom buttons select row heights of
-  80, 120, 160, 200, or 260 logical pixels on Linux and Android. Rows keep the
+- **Gallery grid with 4 zoom levels** — zoom buttons select row heights of
+  100, 160, 230, or 300 logical pixels on Linux and Android. Rows keep the
   same height at each zoom level, with variable-width, uncropped previews
   instead of forced square tiles. Rows can leave unused space at the right;
   very wide images fit within the available width without stretching.
-- **Date navigation** — day section headers and a top-center date indicator
-  while scrolling.
+- **Zoom-aware date groups** — date sections broaden as you zoom out: years at
+  the widest level, months at the next, and individual days (with the weekday
+  name) at the closest levels. A top-center date indicator shows the current
+  section while scrolling.
 - **Albums** — folders on the drive become albums automatically; create new
   albums and move photos into them.
 - **Virtual collections** — SQLite-based albums that can group photos across
   different folders (e.g. "Best of 2024").
 - **Favorites** — heart any photo; persisted in a local SQLite database.
-- **Sorting** — by name, date modified, date taken (EXIF), or size
-  (ascending/descending).
+- **Sorting** — by date taken (EXIF, default), name, date modified, or size
+  (ascending/descending). Photos without EXIF dates fall back to the file's
+  modified date.
 - **Search** — across filenames, tags, and comments.
 - **Tags & comments** — attach tags and a note to any photo, then search by
   them. Built with future AI auto-tagging in mind.
@@ -33,7 +36,11 @@ experience — albums, favorites, search, zoom, tags, and more.
   on both Linux and Android, with a video badge indicator in the grid and
   ffmpeg-generated thumbnails on Linux.
 - **Map view** — browse geotagged photos on an OpenStreetMap map, auto-centers
-  on your most recent photo's location.
+  on your most recent photo's location. GPS extraction runs in a background
+  isolate, results are cached for the session, and only markers in the current
+  viewport are built, so panning and zooming stay responsive.
+- **Date-preserving import** — imported photos keep the source file's modified
+  date, and EXIF date taken is used for sorting and grouping when present.
 - **Metadata** — view EXIF details (dimensions, date taken, camera, ISO,
   aperture, shutter, focal length, GPS).
 - **Rename** and **delete** (single or in bulk).

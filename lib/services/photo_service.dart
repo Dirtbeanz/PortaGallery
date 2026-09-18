@@ -204,6 +204,10 @@ class PhotoService {
     }
 
     await File(sourcePath).copy(targetPath);
+    try {
+      final sourceStat = await File(sourcePath).stat();
+      await File(targetPath).setLastModified(sourceStat.modified);
+    } catch (_) {}
   }
 
   static Future<String> exportFile(String sourcePath, String targetPath) async {

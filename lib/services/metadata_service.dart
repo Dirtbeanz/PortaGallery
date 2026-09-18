@@ -5,14 +5,34 @@ import 'package:exif/exif.dart';
 import '../models/photo_metadata.dart';
 
 class MetadataService {
+  static final Map<String, (double, double)?> _gpsCache = {};
+
+  static bool hasGpsCache(String path) => _gpsCache.containsKey(path);
+
+  static (double, double)? cachedGps(String path) => _gpsCache[path];
+
+  static void cacheGps(String path, (double, double)? gps) {
+    _gpsCache[path] = gps;
+  }
+
   /// Lightweight GPS-only read (skips full metadata extraction for map view).
   static Future<(double, double)?> readGps(String path) async {
+    if (_gpsCache.containsKey(path)) return _gpsCache[path];
     try {
       final meta = await _readExif(path);
-      if (meta.gpsLatitude == null || meta.gpsLongitude == null) return null;
-      if (meta.gpsLatitude == 0.0 && meta.gpsLongitude == 0.0) return null;
-      return (meta.gpsLatitude!, meta.gpsLongitude!);
+      if (meta.gpsLatitude == null || meta.gpsLongitude == null) {
+        _gpsCache[path] = null;
+        return null;
+      }
+      if (meta.gpsLatitude == 0.0 && meta.gpsLongitude == 0.0) {
+        _gpsCache[path] = null;
+        return null;
+      }
+      final gps = (meta.gpsLatitude!, meta.gpsLongitude!);
+      _gpsCache[path] = gps;
+      return gps;
     } catch (_) {
+      _gpsCache[path] = null;
       return null;
     }
   }
