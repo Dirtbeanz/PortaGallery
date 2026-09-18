@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/gallery_provider.dart';
 import '../services/permission_service.dart';
+import '../widgets/drive_picker_dialog.dart';
 import '../widgets/manual_path_dialog.dart';
 import 'albums_view.dart';
 import 'favorites_view.dart';
@@ -106,7 +107,12 @@ class _HomeScreenState extends State<HomeScreen> {
             Material(
               color: Theme.of(context).colorScheme.errorContainer,
               child: InkWell(
-                onTap: () => provider.rescan(),
+                onTap: () async {
+                  if (Platform.isAndroid) {
+                    await PermissionService.ensureAllFilesAccess();
+                  }
+                  provider.rescan();
+                },
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 16, vertical: 10),
@@ -117,9 +123,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'Storage drive not connected. '
-                          'Waiting for "${provider.libraryPath}" — '
-                          'tap to retry.',
+                          Platform.isAndroid
+                              ? 'Storage drive not connected, or access not '
+                                  'granted. Tap to grant access and retry — '
+                                  '"${provider.libraryPath}".'
+                              : 'Storage drive not connected. '
+                                  'Waiting for "${provider.libraryPath}" — '
+                                  'tap to retry.',
                           style: TextStyle(
                               color: Theme.of(context)
                                   .colorScheme
@@ -354,11 +364,18 @@ class _NoLibraryScreen extends StatelessWidget {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
-              FilledButton.icon(
-                icon: const Icon(Icons.folder_open),
-                label: const Text('Choose folder'),
-                onPressed: () => _pickFolder(context, provider),
-              ),
+              if (Platform.isAndroid)
+                FilledButton.icon(
+                  icon: const Icon(Icons.usb),
+                  label: const Text('Detect drives'),
+                  onPressed: () => _pickDrive(context, provider),
+                )
+              else
+                FilledButton.icon(
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('Choose folder'),
+                  onPressed: () => _pickFolder(context, provider),
+                ),
               const SizedBox(height: 8),
               TextButton.icon(
                 icon: const Icon(Icons.keyboard),
@@ -370,6 +387,23 @@ class _NoLibraryScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _pickDrive(
+      BuildContext context, GalleryProvider provider) async {
+    final path = await showDrivePickerDialog(context);
+    if (path == null || path.isEmpty) return;
+
+    if (!Directory(path).existsSync()) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Folder does not exist')),
+        );
+      }
+      return;
+    }
+
+    await provider.setLibraryPath(path);
   }
 
   Future<void> _pickFolder(

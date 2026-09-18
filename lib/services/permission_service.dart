@@ -4,21 +4,26 @@ import 'package:permission_handler/permission_handler.dart';
 
 class PermissionService {
   static Future<bool> requestStorage() async {
-    if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-      return true;
-    }
+    if (!Platform.isAndroid) return true;
 
-    if (Platform.isAndroid) {
-      final photos = await Permission.photos.request();
-      final videos = await Permission.videos.request();
-      if (photos.isGranted || videos.isGranted) return true;
+    if (await hasAllFilesAccess()) return true;
+    if (await ensureAllFilesAccess()) return true;
 
-      final manage = await Permission.manageExternalStorage.request();
-      if (manage.isGranted) return true;
+    final photos = await Permission.photos.request();
+    final videos = await Permission.videos.request();
+    return photos.isGranted || videos.isGranted;
+  }
 
-      return photos.isGranted || videos.isGranted;
-    }
+  static Future<bool> hasAllFilesAccess() async {
+    if (!Platform.isAndroid) return true;
+    return (await Permission.manageExternalStorage.status).isGranted;
+  }
 
-    return true;
+  static Future<bool> ensureAllFilesAccess() async {
+    if (!Platform.isAndroid) return true;
+    var status = await Permission.manageExternalStorage.status;
+    if (status.isGranted) return true;
+    status = await Permission.manageExternalStorage.request();
+    return status.isGranted;
   }
 }

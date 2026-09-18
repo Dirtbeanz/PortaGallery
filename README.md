@@ -87,8 +87,12 @@ The chosen path is stored in a config file:
 - **Android:** the app's private support directory (the "type a path" option is
   best for USB drives, which mount at paths like `/storage/XXXX-XXXX/`)
 
-On Android, grant "All files access" when prompted so the app can read photos on
-a mounted USB drive.
+On Android, tap **Detect drives** (or **Settings → Change drive**) to pick your
+USB drive directly — volumes appear as `/storage/XXXX-XXXX`. Grant
+**"All files access"** when prompted: photo/video permissions alone cannot
+read files on removable drives, and the system folder picker may not show USB
+volumes at all. If the app shows the drive as not connected, tap the banner to
+grant access and retry.
 
 ## Download / run
 

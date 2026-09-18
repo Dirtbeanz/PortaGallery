@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../providers/gallery_provider.dart';
 import '../services/config_service.dart';
 import '../services/diagnostic_log_service.dart';
+import '../widgets/drive_picker_dialog.dart';
 import '../widgets/manual_path_dialog.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -51,8 +52,9 @@ class SettingsScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               FilledButton.icon(
-                icon: const Icon(Icons.folder_open),
-                label: const Text('Change folder'),
+                icon: Icon(Platform.isAndroid ? Icons.usb : Icons.folder_open),
+                label: Text(
+                    Platform.isAndroid ? 'Change drive' : 'Change folder'),
                 onPressed: () => _changeFolder(context, provider),
               ),
               TextButton.icon(
@@ -266,7 +268,12 @@ class SettingsScreen extends StatelessWidget {
 
   Future<void> _changeFolder(
       BuildContext context, GalleryProvider provider) async {
-    final path = await FilePicker.platform.getDirectoryPath();
+    String? path;
+    if (Platform.isAndroid) {
+      path = await showDrivePickerDialog(context);
+    } else {
+      path = await FilePicker.platform.getDirectoryPath();
+    }
     if (path == null || path.isEmpty) return;
 
     if (!Directory(path).existsSync()) {
