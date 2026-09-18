@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/photo_item.dart';
 import '../models/photo_notes.dart';
+import '../models/trash_item.dart';
 import '../services/config_service.dart';
 import '../services/database_service.dart';
 import '../services/diagnostic_log_service.dart';
@@ -30,6 +31,13 @@ class GalleryProvider extends ChangeNotifier {
 
   Map<String, PhotoNotes> _notes = {};
   PhotoNotes getNotes(String path) => _notes[path] ?? const PhotoNotes();
+
+  Map<String, DateTime> _dateOverrides = {};
+  Map<String, DateTime> get dateOverrides => _dateOverrides;
+
+  List<TrashItem> _trashItems = [];
+  List<TrashItem> get trashItems => _trashItems;
+  int get trashCount => _trashItems.length;
 
   final Map<String, String> _thumbPaths = {};
   String? thumbPathOrNull(PhotoItem photo) => _thumbPaths[photo.path];
@@ -95,6 +103,8 @@ class GalleryProvider extends ChangeNotifier {
     _favoritePaths = await _database.getFavoritePaths();
     _notes = await _database.getAllNotes();
     _virtualAlbums = await _database.getVirtualAlbums();
+    _dateOverrides = await _database.getDateOverrides();
+    _trashItems = await _database.getTrashItems();
     if (!_isCurrent(generation)) return;
     if (isConfigured) {
       // Load cached photo list for instant UI, then rescan in background.
@@ -111,6 +121,7 @@ class GalleryProvider extends ChangeNotifier {
       if (scoped != null && scoped.isNotEmpty) {
         for (final photo in scoped) {
           photo.isFavorite = _favoritePaths.contains(photo.path);
+          _applyDateOverride(photo);
         }
         _photos = scoped;
         _photoIndex = {for (final photo in scoped) photo.path: photo};
@@ -233,6 +244,7 @@ class GalleryProvider extends ChangeNotifier {
         } else if (old != null && getAspectRatio(old) != photo.aspectRatio) {
           ratiosChanged = true;
         }
+        _applyDateOverride(photo);
       }
       _thumbPaths.removeWhere((path, _) => !unchanged.contains(path));
       _thumbFailed.removeWhere((path) => !unchanged.contains(path));
@@ -627,13 +639,13 @@ class GalleryProvider extends ChangeNotifier {
   double rowHeightForZoom() {
     switch (_zoomLevel) {
       case 0:
-        return 100;
+        return 64;
       case 1:
-        return 160;
+        return 96;
       case 2:
-        return 230;
+        return 150;
       default:
-        return 300;
+        return 240;
     }
   }
 
@@ -735,57 +747,216 @@ class GalleryProvider extends ChangeNotifier {
     return count;
   }
 
-  Future<void> deletePhoto(PhotoItem photo) async {
-    try {
-      final file = File(photo.path);
-      if (await file.exists()) {
-        await file.delete();
-      }
-      if (_favoritePaths.contains(photo.path)) {
-        await _database.removeFavorite(photo.path);
-        _favoritePaths.remove(photo.path);
-      }
-      if (_notes.containsKey(photo.path)) {
-        await _database.removeNotes(photo.path);
-        _notes.remove(photo.path);
-      }
-      await _database.removeMissingPaths([photo.path]);
-      _photos.removeWhere((p) => p.path == photo.path);
-      _photoIndex.remove(photo.path);
-      _albums = _buildAlbums();
-      _sectionsDirty = true;
-      _visiblePhotosDirty = true;
-      _favoritesCache = null;
-      notifyListeners();
-    } catch (_) {}
+  void _applyDateOverride(PhotoItem photo) {
+    final override = _dateOverrides[photo.path];
+    if (override != null) photo.dateTaken = override;
   }
 
-  Future<void> deletePhotos(List<PhotoItem> photos) async {
+  Future<void> setDateTaken(PhotoItem photo, DateTime? date) async {
+    if (date == null) {
+      _dateOverrides.remove(photo.path);
+      final exif = await PhotoService.readExifDateQuick(photo.path);
+      photo.dateTaken = exif;
+    } else {
+      _dateOverrides[photo.path] = date;
+      photo.dateTaken = date;
+    }
+    await _database.setDateOverride(photo.path, date);
+    _sectionsDirty = true;
+    _visiblePhotosDirty = true;
+    notifyListeners();
+  }
+
+  Future<void> deletePhoto(PhotoItem photo) => moveToTrash([photo]);
+
+  Future<void> deletePhotos(List<PhotoItem> photos) => moveToTrash(photos);
+
+  Directory? _trashDirectory() {
+    final path = libraryPath;
+    if (path == null || path.isEmpty) return null;
+    return Directory(p.join(path, '.trash'));
+  }
+
+  Future<String?> _uniqueTrashPath(String name) async {
+    final dir = _trashDirectory();
+    if (dir == null) return null;
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    var candidate = p.join(dir.path, '${stamp}_$name');
+    var counter = 1;
+    while (File(candidate).existsSync()) {
+      candidate = p.join(dir.path, '${stamp}_${counter}_$name');
+      counter++;
+    }
+    return candidate;
+  }
+
+  Future<int> moveToTrash(List<PhotoItem> photos) async {
+    final dir = _trashDirectory();
+    if (dir == null || photos.isEmpty) return 0;
+    final items = <TrashItem>[];
+    final moved = <String>[];
     for (final photo in photos) {
       try {
+        final target = await _uniqueTrashPath(photo.name);
+        if (target == null) continue;
         final file = File(photo.path);
         if (await file.exists()) {
-          await file.delete();
+          await file.rename(target);
         }
-        if (_favoritePaths.contains(photo.path)) {
-          await _database.removeFavorite(photo.path);
-        }
-        if (_notes.containsKey(photo.path)) {
-          await _database.removeNotes(photo.path);
-          _notes.remove(photo.path);
-        }
-        await _database.removeMissingPaths([photo.path]);
-        _photos.removeWhere((p) => p.path == photo.path);
-        _photoIndex.remove(photo.path);
+        items.add(TrashItem(
+          trashedPath: target,
+          originalPath: photo.path,
+          deletedAt: DateTime.now(),
+        ));
+        moved.add(photo.path);
       } catch (_) {}
     }
-    _favoritePaths = await _database.getFavoritePaths();
+    if (items.isEmpty) return 0;
+    await _database.addTrashItems(items);
+    _trashItems = await _database.getTrashItems();
+    for (final path in moved) {
+      _photos.removeWhere((photo) => photo.path == path);
+      _photoIndex.remove(path);
+      _thumbPaths.remove(path);
+      _thumbFailed.remove(path);
+    }
     _albums = _buildAlbums();
     _sectionsDirty = true;
     _visiblePhotosDirty = true;
     _favoritesCache = null;
-    await loadVirtualAlbums();
     notifyListeners();
+    return items.length;
+  }
+
+  Future<int> restoreTrash(List<TrashItem> items) async {
+    var restored = 0;
+    final done = <String>[];
+    for (final item in items) {
+      try {
+        final source = File(item.trashedPath);
+        if (!await source.exists()) continue;
+        final targetDir = Directory(p.dirname(item.originalPath));
+        if (!await targetDir.exists()) await targetDir.create(recursive: true);
+        var target = item.originalPath;
+        var counter = 1;
+        final base = p.basenameWithoutExtension(item.originalPath);
+        final ext = p.extension(item.originalPath);
+        while (File(target).existsSync()) {
+          target = p.join(targetDir.path, '${base}_$counter$ext');
+          counter++;
+        }
+        await source.rename(target);
+        done.add(item.trashedPath);
+        restored++;
+      } catch (_) {}
+    }
+    if (done.isNotEmpty) {
+      await _database.removeTrashItems(done);
+      _trashItems = await _database.getTrashItems();
+      await rescan();
+    }
+    return restored;
+  }
+
+  Future<int> emptyTrash() async {
+    var deleted = 0;
+    final done = <String>[];
+    final originals = <String>[];
+    for (final item in List<TrashItem>.of(_trashItems)) {
+      try {
+        final file = File(item.trashedPath);
+        if (await file.exists()) await file.delete();
+        done.add(item.trashedPath);
+        originals.add(item.originalPath);
+        deleted++;
+      } catch (_) {}
+    }
+    if (done.isNotEmpty) {
+      await _database.removeTrashItems(done);
+      await _database.removeMissingPaths(originals);
+      _trashItems = await _database.getTrashItems();
+      _favoritePaths = await _database.getFavoritePaths();
+      _notes = await _database.getAllNotes();
+      for (final path in originals) {
+        _dateOverrides.remove(path);
+      }
+      notifyListeners();
+    }
+    final dir = _trashDirectory();
+    try {
+      if (dir != null && await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    } catch (_) {}
+    return deleted;
+  }
+
+  Future<bool> renameAlbum(String albumPath, String newName) async {
+    final library = libraryPath;
+    if (library == null || albumPath.isEmpty || newName.trim().isEmpty) {
+      return false;
+    }
+    try {
+      final source = Directory(p.join(library, albumPath));
+      final target = Directory(p.join(library, newName.trim()));
+      if (!await source.exists() || await target.exists()) return false;
+      await source.rename(target.path);
+      await rescan();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<int> dissolveAlbum(String albumPath) async {
+    final library = libraryPath;
+    if (library == null || albumPath.isEmpty) return 0;
+    final dir = Directory(p.join(library, albumPath));
+    var moved = 0;
+    try {
+      if (!await dir.exists()) return 0;
+      final entries = await dir.list(followLinks: false).toList();
+      for (final entry in entries) {
+        if (entry is! File) continue;
+        try {
+          var target = p.join(library, p.basename(entry.path));
+          var counter = 1;
+          final base = p.basenameWithoutExtension(entry.path);
+          final ext = p.extension(entry.path);
+          while (File(target).existsSync()) {
+            target = p.join(library, '${base}_$counter$ext');
+            counter++;
+          }
+          await entry.rename(target);
+          moved++;
+        } catch (_) {}
+      }
+      try {
+        await dir.delete(recursive: true);
+      } catch (_) {}
+      await rescan();
+    } catch (_) {}
+    return moved;
+  }
+
+  Future<int> deleteAlbum(String albumPath) async {
+    final library = libraryPath;
+    if (library == null || albumPath.isEmpty) return 0;
+    final dir = Directory(p.join(library, albumPath));
+    try {
+      if (!await dir.exists()) return 0;
+      final photos =
+          _photos.where((photo) => photo.album == albumPath).toList();
+      final moved = await moveToTrash(photos);
+      try {
+        await dir.delete(recursive: true);
+      } catch (_) {}
+      await rescan();
+      return moved;
+    } catch (_) {
+      return 0;
+    }
   }
 
   Future<bool> renamePhoto(PhotoItem photo, String newName) async {

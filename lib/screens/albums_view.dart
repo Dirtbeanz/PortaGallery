@@ -235,6 +235,7 @@ class _AlbumCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () => _openAlbum(context),
+      onLongPress: () => _menu(context),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Stack(
@@ -322,6 +323,124 @@ class _AlbumCard extends StatelessWidget {
       MaterialPageRoute(
         builder: (_) => AlbumDetailScreen(album: album),
       ),
+    );
+  }
+
+  void _menu(BuildContext context) {
+    final provider = context.read<GalleryProvider>();
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              ListTile(
+                title: Text(_albumTitle(album.name),
+                    style: Theme.of(context).textTheme.titleSmall),
+                subtitle: Text(album.photoCount == 0
+                    ? 'Empty album'
+                    : '${album.photoCount} photos'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('Rename album'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _rename(context, provider);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_open),
+                title: const Text('Move contents to Photos'),
+                subtitle:
+                    const Text('Dissolve this album into the library root'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  final moved = await provider.dissolveAlbum(album.path);
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Moved $moved file(s) to Photos')),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Delete album and photos'),
+                subtitle: const Text('Photos are moved to the trash'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Delete album?'),
+                      content: Text(
+                          'All photos in "${_albumTitle(album.name)}" will be '
+                          'moved to the trash.'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor:
+                                Theme.of(context).colorScheme.error,
+                          ),
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: const Text('Delete'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed != true) return;
+                  final moved = await provider.deleteAlbum(album.path);
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content:
+                            Text('Moved $moved photo(s) to the trash')),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _rename(BuildContext context, GalleryProvider provider) {
+    final controller = TextEditingController(text: _albumTitle(album.name));
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Rename album'),
+          content: TextField(controller: controller, autofocus: true),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final ok =
+                    await provider.renameAlbum(album.path, controller.text);
+                if (!context.mounted) return;
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                      content: Text(
+                          ok ? 'Album renamed' : 'Could not rename album')),
+                );
+              },
+              child: const Text('Rename'),
+            ),
+          ],
+        );
+      },
     );
   }
 }

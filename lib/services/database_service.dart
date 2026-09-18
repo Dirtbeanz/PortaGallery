@@ -8,6 +8,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/photo_item.dart';
 import '../models/photo_notes.dart';
+import '../models/trash_item.dart';
 
 class DatabaseService {
   Database? _db;
@@ -26,7 +27,7 @@ class DatabaseService {
     _db = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE favorites (
@@ -64,6 +65,19 @@ class DatabaseService {
               is_video INTEGER NOT NULL
             )
           ''');
+          await db.execute('''
+            CREATE TABLE date_overrides (
+              path TEXT PRIMARY KEY,
+              date_taken INTEGER NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE trash (
+              trashed_path TEXT PRIMARY KEY,
+              original_path TEXT NOT NULL,
+              deleted_at INTEGER NOT NULL
+            )
+          ''');
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -99,6 +113,21 @@ class DatabaseService {
                 size_bytes INTEGER NOT NULL,
                 modified_at INTEGER NOT NULL,
                 is_video INTEGER NOT NULL
+              )
+            ''');
+          }
+          if (oldVersion < 5) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS date_overrides (
+                path TEXT PRIMARY KEY,
+                date_taken INTEGER NOT NULL
+              )
+            ''');
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS trash (
+                trashed_path TEXT PRIMARY KEY,
+                original_path TEXT NOT NULL,
+                deleted_at INTEGER NOT NULL
               )
             ''');
           }
@@ -234,9 +263,66 @@ class DatabaseService {
     for (final path in missingPaths) {
       batch.delete('favorites', where: 'path = ?', whereArgs: [path]);
       batch.delete('notes', where: 'path = ?', whereArgs: [path]);
+      batch.delete('date_overrides', where: 'path = ?', whereArgs: [path]);
       batch.delete('virtual_album_items',
           where: 'path = ?', whereArgs: [path]);
       batch.delete('photo_cache', where: 'path = ?', whereArgs: [path]);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<Map<String, DateTime>> getDateOverrides() async {
+    final db = await database;
+    final rows = await db.query('date_overrides');
+    final map = <String, DateTime>{};
+    for (final row in rows) {
+      map[row['path'] as String] =
+          DateTime.fromMillisecondsSinceEpoch(row['date_taken'] as int);
+    }
+    return map;
+  }
+
+  Future<void> setDateOverride(String path, DateTime? date) async {
+    final db = await database;
+    if (date == null) {
+      await db.delete('date_overrides', where: 'path = ?', whereArgs: [path]);
+      return;
+    }
+    await db.insert(
+      'date_overrides',
+      {'path': path, 'date_taken': date.millisecondsSinceEpoch},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<TrashItem>> getTrashItems() async {
+    final db = await database;
+    final rows = await db.query('trash', orderBy: 'deleted_at DESC');
+    return rows.map(TrashItem.fromMap).toList();
+  }
+
+  Future<void> addTrashItems(List<TrashItem> items) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final item in items) {
+      batch.insert(
+        'trash',
+        {
+          'trashed_path': item.trashedPath,
+          'original_path': item.originalPath,
+          'deleted_at': item.deletedAt.millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<void> removeTrashItems(List<String> trashedPaths) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final path in trashedPaths) {
+      batch.delete('trash', where: 'trashed_path = ?', whereArgs: [path]);
     }
     await batch.commit(noResult: true);
   }

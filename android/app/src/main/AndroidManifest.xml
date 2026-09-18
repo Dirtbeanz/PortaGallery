@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Map tiles are loaded from the network -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Read/write user photos on the device and on mounted USB drives -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />

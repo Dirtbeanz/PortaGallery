@@ -329,8 +329,9 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Delete photo?'),
-          content: Text('This will permanently delete "${_current.name}".'),
+          title: const Text('Move to trash?'),
+          content: Text('"${_current.name}" will be moved to the trash. '
+              'You can restore it later.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -341,7 +342,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                 backgroundColor: Theme.of(context).colorScheme.error,
               ),
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
+              child: const Text('Move to trash'),
             ),
           ],
         );
@@ -473,9 +474,8 @@ class _MetadataSheetState extends State<_MetadataSheet> {
           _formatDate(widget.photo.modifiedAt)),
     ];
 
-    if (meta.dateTaken != null) {
-      rows.add(_row(context, Icons.photo_camera, 'Date taken',
-          _formatDate(meta.dateTaken!)));
+    if (widget.photo.dateTaken != null || meta.dateTaken != null) {
+      rows.add(_dateTakenRow(context, meta));
     }
     if (meta.cameraMake != null || meta.cameraModel != null) {
       final camera = [meta.cameraMake, meta.cameraModel]
@@ -520,6 +520,61 @@ class _MetadataSheetState extends State<_MetadataSheet> {
     rows.add(_row(context, Icons.link, 'Path', widget.photo.path));
 
     return rows;
+  }
+
+  Widget _dateTakenRow(BuildContext context, PhotoMetadata meta) {
+    final provider = context.watch<GalleryProvider>();
+    final photo = widget.photo;
+    final date = photo.dateTaken ?? meta.dateTaken;
+    final isOverride = provider.dateOverrides.containsKey(photo.path);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.photo_camera, size: 20, color: Colors.grey),
+          const SizedBox(width: 12),
+          const SizedBox(
+            width: 100,
+            child: Text('Date taken',
+                style: TextStyle(color: Colors.grey, fontSize: 13)),
+          ),
+          Expanded(
+            child: Text(
+              date == null ? 'Unknown' : _formatDate(date),
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+          if (isOverride)
+            IconButton(
+              icon: const Icon(Icons.restart_alt, size: 18),
+              tooltip: 'Clear override',
+              visualDensity: VisualDensity.compact,
+              onPressed: () async {
+                await provider.setDateTaken(photo, null);
+                if (mounted) setState(() {});
+              },
+            ),
+          IconButton(
+            icon: const Icon(Icons.edit, size: 18),
+            tooltip: 'Edit date taken',
+            visualDensity: VisualDensity.compact,
+            onPressed: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: date ?? DateTime.now(),
+                firstDate: DateTime(1900),
+                lastDate: DateTime(2100),
+              );
+              if (picked == null) return;
+              await provider.setDateTaken(photo, picked);
+              if (mounted) setState(() {});
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _tagsRow(BuildContext context, List<String> tags) {

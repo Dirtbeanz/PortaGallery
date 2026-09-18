@@ -128,55 +128,67 @@ class _PhotosViewState extends State<PhotosView> {
         top: false,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              TextButton.icon(
-                icon: const Icon(Icons.close),
-                label: Text('${_selected.length}'),
-                onPressed: _clearSelection,
+              Row(
+                children: [
+                  TextButton.icon(
+                    icon: const Icon(Icons.close),
+                    label: Text('${_selected.length}'),
+                    onPressed: _clearSelection,
+                  ),
+                  TextButton(
+                    onPressed: () => _selectAll(provider),
+                    child: Text(
+                      _selected.length == provider.visiblePhotos.length
+                          ? 'Deselect all'
+                          : 'Select all',
+                    ),
+                  ),
+                  const Spacer(),
+                ],
               ),
-              TextButton(
-                onPressed: () => _selectAll(provider),
-                child: Text(
-                  _selected.length == provider.visiblePhotos.length
-                      ? 'Deselect all'
-                      : 'Select all',
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                icon: Icon(
-                    allFavorite ? Icons.favorite : Icons.favorite_border),
-                color: allFavorite ? Colors.redAccent : null,
-                tooltip: 'Toggle favorite',
-                onPressed: () async {
-                  await provider.setFavorites(_selectedPhotos, !allFavorite);
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.download),
-                tooltip: 'Download copies',
-                onPressed: () => _downloadSelected(context, provider),
-              ),
-              IconButton(
-                icon: const Icon(Icons.drive_file_move_outline),
-                tooltip: 'Move to album',
-                onPressed: () => _moveToAlbum(context, provider),
-              ),
-              IconButton(
-                icon: const Icon(Icons.photo_library_outlined),
-                tooltip: 'Add to collection',
-                onPressed: () => _addToVirtualAlbum(context, provider),
-              ),
-              IconButton(
-                icon: const Icon(Icons.share),
-                tooltip: 'Share',
-                onPressed: () => _shareSelected(),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline),
-                tooltip: 'Delete',
-                onPressed: () => _deleteSelected(context, provider),
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  IconButton(
+                    icon: Icon(
+                        allFavorite ? Icons.favorite : Icons.favorite_border),
+                    color: allFavorite ? Colors.redAccent : null,
+                    tooltip: 'Toggle favorite',
+                    onPressed: () async {
+                      await provider.setFavorites(
+                          _selectedPhotos, !allFavorite);
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.download),
+                    tooltip: 'Download copies',
+                    onPressed: () => _downloadSelected(context, provider),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.drive_file_move_outline),
+                    tooltip: 'Move to album',
+                    onPressed: () => _moveToAlbum(context, provider),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.photo_library_outlined),
+                    tooltip: 'Add to collection',
+                    onPressed: () => _addToVirtualAlbum(context, provider),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.share),
+                    tooltip: 'Share',
+                    onPressed: () => _shareSelected(),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Move to trash',
+                    onPressed: () => _deleteSelected(context, provider),
+                  ),
+                ],
               ),
             ],
           ),
@@ -291,8 +303,9 @@ class _PhotosViewState extends State<PhotosView> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Delete photos?'),
-          content: Text('This will permanently delete $count photo(s).'),
+          title: const Text('Move to trash?'),
+          content: Text('$count photo(s) will be moved to the trash. '
+              'You can restore them later.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -303,7 +316,7 @@ class _PhotosViewState extends State<PhotosView> {
                 backgroundColor: Theme.of(context).colorScheme.error,
               ),
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
+              child: const Text('Move to trash'),
             ),
           ],
         );

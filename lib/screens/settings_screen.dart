@@ -11,6 +11,8 @@ import '../services/config_service.dart';
 import '../services/diagnostic_log_service.dart';
 import '../widgets/drive_picker_dialog.dart';
 import '../widgets/manual_path_dialog.dart';
+import 'duplicates_screen.dart';
+import 'trash_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -112,6 +114,30 @@ class SettingsScreen extends StatelessWidget {
                 leading: const Icon(Icons.refresh),
                 title: const Text('Rescan library'),
                 onTap: () => _rescan(context, provider),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Trash'),
+                subtitle: Text(provider.trashCount == 0
+                    ? 'Empty'
+                    : '${provider.trashCount} item(s)'),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const TrashScreen()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.content_copy),
+                title: const Text('Find duplicates'),
+                subtitle: const Text(
+                    'Compare photos by size and content'),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const DuplicatesScreen()),
+                  );
+                },
               ),
               ListTile(
                 leading: const Icon(Icons.description),

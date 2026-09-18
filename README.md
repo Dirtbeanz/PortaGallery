@@ -11,7 +11,7 @@ experience — albums, favorites, search, zoom, tags, and more.
 ## Features
 
 - **Gallery grid with 4 zoom levels** — zoom buttons select row heights of
-  100, 160, 230, or 300 logical pixels on Linux and Android. Rows keep the
+  64, 96, 150, or 240 logical pixels on Linux and Android. Rows keep the
   same height at each zoom level, with variable-width, uncropped previews
   instead of forced square tiles. Rows can leave unused space at the right;
   very wide images fit within the available width without stretching.
@@ -36,14 +36,25 @@ experience — albums, favorites, search, zoom, tags, and more.
   on both Linux and Android, with a video badge indicator in the grid and
   ffmpeg-generated thumbnails on Linux.
 - **Map view** — browse geotagged photos on an OpenStreetMap map, auto-centers
-  on your most recent photo's location. GPS extraction runs in a background
-  isolate, results are cached for the session, and only markers in the current
-  viewport are built, so panning and zooming stay responsive.
+  on your most recent photo's location. Map tiles are downloaded from
+  OpenStreetMap and need an internet connection. GPS extraction runs in a
+  background isolate, results are cached for the session, and only markers in
+  the current viewport are built, so panning and zooming stay responsive.
 - **Date-preserving import** — imported photos keep the source file's modified
   date, and EXIF date taken is used for sorting and grouping when present.
 - **Metadata** — view EXIF details (dimensions, date taken, camera, ISO,
   aperture, shutter, focal length, GPS).
 - **Rename** and **delete** (single or in bulk).
+- **Trash** — deleted photos and videos move to a `.trash` folder inside the
+  library instead of being erased. Restore items individually or empty the
+  trash to delete permanently.
+- **Duplicate finder** — groups files with identical size and content
+  (first/last 64KB comparison) so you can review and trash the extra copies.
+- **Album management** — rename folders, dissolve an album into the library
+  root, or delete an album with its photos moved to the trash.
+- **Metadata editing** — override the date taken for any photo; the override
+  is used for sorting and date grouping, and can be cleared to fall back to
+  EXIF data.
 - **Import to album** — when importing photos, choose an existing album, create
   a new one, or import to the library root.
 - **Export / download** — save a copy to your Downloads folder.
