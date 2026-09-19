@@ -175,6 +175,125 @@ class PhotoService {
     }
   }
 
+  /// Lightweight GPS reader — reads only the first 128KB for the EXIF APP1
+  /// header and parses the GPS IFD. Much faster than reading whole files.
+  static Future<(double, double)?> readGpsQuick(String path) async {
+    RandomAccessFile? raf;
+    try {
+      final file = File(path);
+      raf = await file.open();
+      final header = await raf.read(131072);
+      if (header.length < 12 || header[0] != 0xFF || header[1] != 0xD8) {
+        return null;
+      }
+      var off = 2;
+      while (off + 9 < header.length) {
+        if (header[off] != 0xFF) {
+          off++;
+          continue;
+        }
+        final marker = header[off + 1];
+        if (marker == 0xD8 || marker == 0xD9) {
+          off += 2;
+          continue;
+        }
+        if (marker >= 0xD0 && marker <= 0xDA) {
+          off += 2;
+          continue;
+        }
+        if (off + 3 >= header.length) break;
+        final len = (header[off + 2] << 8) + header[off + 3];
+        if (len < 2) break;
+        if (marker == 0xE1) {
+          final gps = _parseGps(header, off + 4, len - 2);
+          if (gps != null) return gps;
+        }
+        off += 2 + len;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      try {
+        await raf?.close();
+      } catch (_) {}
+    }
+  }
+
+  static (double, double)? _parseGps(List<int> b, int start, int length) {
+    try {
+      if (length < 14 || start + 8 > b.length) return null;
+      // "Exif\0\0"
+      if (!(b[start] == 0x45 && b[start + 1] == 0x78 &&
+          b[start + 2] == 0x69 && b[start + 3] == 0x66)) {
+        return null;
+      }
+      final tiff = start + 6;
+      final little = b[tiff] == 0x49;
+      final tag = u16(b, tiff + 2, little);
+      if (!(tag == 0x002A || tag == 0x2A00)) return null;
+      final ifd0 = tiff + u32(b, tiff + 4, little);
+      if (ifd0 + 2 > b.length) return null;
+      var entry = ifd0 + 2;
+      final count = u16(b, ifd0, little);
+      int? gpsIfdOffset;
+      for (var i = 0; i < count && entry + 12 <= b.length; i++) {
+        if (u16(b, entry, little) == 0x8825) {
+          gpsIfdOffset = u32(b, entry + 8, little);
+          break;
+        }
+        entry += 12;
+      }
+      if (gpsIfdOffset == null) return null;
+      final gpsIfd = tiff + gpsIfdOffset;
+      if (gpsIfd + 2 > b.length) return null;
+      final gpsCount = u16(b, gpsIfd, little);
+      var e = gpsIfd + 2;
+      double? lat;
+      double? lon;
+      var latSouth = false;
+      var lonWest = false;
+      for (var i = 0; i < gpsCount && e + 12 <= b.length; i++) {
+        final eTag = u16(b, e, little);
+        final type = u16(b, e + 2, little);
+        final cnt = u32(b, e + 4, little);
+        if (eTag == 0x0001 && type == 2) {
+          latSouth = b[e + 8] == 0x53; // 'S'
+        } else if (eTag == 0x0003 && type == 2) {
+          lonWest = b[e + 8] == 0x57; // 'W'
+        } else if (eTag == 0x0002 && type == 5 && cnt >= 3) {
+          lat = _gpsRationals(b, tiff + u32(b, e + 8, little), little, 3);
+        } else if (eTag == 0x0004 && type == 5 && cnt >= 3) {
+          lon = _gpsRationals(b, tiff + u32(b, e + 8, little), little, 3);
+        }
+        e += 12;
+      }
+      if (lat == null || lon == null) return null;
+      if (latSouth) lat = -lat;
+      if (lonWest) lon = -lon;
+      if (lat == 0 && lon == 0) return null;
+      if (lat.abs() > 90 || lon.abs() > 180) return null;
+      return (lat, lon);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static double? _gpsRationals(
+      List<int> b, int offset, bool little, int count) {
+    if (offset + count * 8 > b.length) return null;
+    var value = 0.0;
+    var divisor = 1.0;
+    for (var i = 0; i < count; i++) {
+      final numerator = u32(b, offset + i * 8, little);
+      final denominator = u32(b, offset + i * 8 + 4, little);
+      if (denominator == 0) return null;
+      value += (numerator / denominator) / divisor;
+      divisor *= 60;
+    }
+    return value;
+  }
+
   static Future<Map<String, DateTime>> readExifDatesBulk(
       List<String> paths) async {
     final out = <String, DateTime>{};

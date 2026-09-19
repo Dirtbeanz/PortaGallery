@@ -355,6 +355,7 @@ class GalleryProvider extends ChangeNotifier {
     final (paths, ratios) = await compute(
         _readCachedThumbnails, (directory: dir.path, entries: entries));
     if (!_isCurrent(generation)) return;
+    var ratiosChanged = false;
     for (final photo in snapshot) {
       if (!identical(_photoIndex[photo.path], photo)) continue;
       final target = paths[photo.path];
@@ -362,15 +363,19 @@ class GalleryProvider extends ChangeNotifier {
       _thumbPaths[photo.path] = target;
       _thumbFailed.remove(photo.path);
       final ratio = ratios[photo.path];
-      if (ratio != null) _setAspectRatio(photo, ratio);
+      if (ratio != null && _setAspectRatio(photo, ratio)) {
+        ratiosChanged = true;
+      }
     }
+    if (ratiosChanged) layoutVersion++;
   }
 
-  void _setAspectRatio(PhotoItem photo, double ratio) {
-    if (!ratio.isFinite || ratio <= 0) return;
-    if (getAspectRatio(photo) != ratio) layoutVersion++;
+  bool _setAspectRatio(PhotoItem photo, double ratio) {
+    if (!ratio.isFinite || ratio <= 0) return false;
+    if (getAspectRatio(photo) == ratio) return false;
     _aspectRatios[photo.path] = ratio;
     photo.aspectRatio = ratio;
+    return true;
   }
 
   void requestThumbnails(List<PhotoItem> photos) {
@@ -393,6 +398,8 @@ class GalleryProvider extends ChangeNotifier {
     if (_thumbing || _disposed) return;
     _thumbing = true;
     var changed = 0;
+    var ratiosChanged = false;
+    var lastNotify = DateTime.now();
     try {
       while (!_disposed && !isLoading && _thumbPending.isNotEmpty) {
         final generation = _generation;
@@ -432,18 +439,30 @@ class GalleryProvider extends ChangeNotifier {
             _thumbFailed.add(path);
           } else {
             _thumbPaths[path] = target;
-            if (ratio != null) _setAspectRatio(photo, ratio);
+            if (ratio != null && _setAspectRatio(photo, ratio)) {
+              ratiosChanged = true;
+            }
             changed++;
           }
         }));
-        // Batch notifications to avoid re-laying out the grid on every thumbnail.
-        if (changed >= 12) {
+        // Notify in batches so the grid does not re-lay out the whole library
+        // for every single thumbnail. Aspect-ratio version bumps are coalesced
+        // into the same notification.
+        final elapsed = DateTime.now().difference(lastNotify);
+        if (changed >= 12 ||
+            (changed > 0 && elapsed >= const Duration(milliseconds: 600))) {
+          if (ratiosChanged) {
+            layoutVersion++;
+            ratiosChanged = false;
+          }
           notifyListeners();
+          lastNotify = DateTime.now();
           changed = 0;
         }
       }
     } finally {
       _thumbing = false;
+      if (ratiosChanged) layoutVersion++;
       notifyListeners();
     }
   }

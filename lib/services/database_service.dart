@@ -27,7 +27,7 @@ class DatabaseService {
     _db = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE favorites (
@@ -62,7 +62,9 @@ class DatabaseService {
               album TEXT NOT NULL,
               size_bytes INTEGER NOT NULL,
               modified_at INTEGER NOT NULL,
-              is_video INTEGER NOT NULL
+              is_video INTEGER NOT NULL,
+              aspect_ratio REAL NOT NULL DEFAULT 1.0,
+              date_taken INTEGER
             )
           ''');
           await db.execute('''
@@ -130,6 +132,12 @@ class DatabaseService {
                 deleted_at INTEGER NOT NULL
               )
             ''');
+          }
+          if (oldVersion < 6) {
+            await db.execute(
+                'ALTER TABLE photo_cache ADD COLUMN aspect_ratio REAL NOT NULL DEFAULT 1.0');
+            await db.execute(
+                'ALTER TABLE photo_cache ADD COLUMN date_taken INTEGER');
           }
         },
       ),
@@ -340,6 +348,8 @@ class DatabaseService {
           'size_bytes': photo.sizeBytes,
           'modified_at': photo.modifiedAt.millisecondsSinceEpoch,
           'is_video': photo.isVideo ? 1 : 0,
+          'aspect_ratio': photo.aspectRatio,
+          'date_taken': photo.dateTaken?.millisecondsSinceEpoch,
         });
       }
       await batch.commit(noResult: true);
@@ -350,13 +360,26 @@ class DatabaseService {
     final db = await database;
     final rows = await db.query('photo_cache');
     if (rows.isEmpty) return null;
-    return rows.map((r) => PhotoItem(
-      path: r['path'] as String,
-      name: r['name'] as String,
-      album: r['album'] as String,
-      sizeBytes: r['size_bytes'] as int,
-      modifiedAt: DateTime.fromMillisecondsSinceEpoch(r['modified_at'] as int),
-      isVideo: (r['is_video'] as int) == 1,
-    )).toList();
+    return rows.map((r) {
+      final ratioRaw = r['aspect_ratio'];
+      final ratio = ratioRaw is num && ratioRaw > 0
+          ? ratioRaw.toDouble()
+          : 1.0;
+      final dateRaw = r['date_taken'];
+      final dateTaken = dateRaw is int && dateRaw > 0
+          ? DateTime.fromMillisecondsSinceEpoch(dateRaw)
+          : null;
+      return PhotoItem(
+        path: r['path'] as String,
+        name: r['name'] as String,
+        album: r['album'] as String,
+        sizeBytes: r['size_bytes'] as int,
+        modifiedAt:
+            DateTime.fromMillisecondsSinceEpoch(r['modified_at'] as int),
+        dateTaken: dateTaken,
+        isVideo: (r['is_video'] as int) == 1,
+        aspectRatio: ratio,
+      );
+    }).toList();
   }
 }

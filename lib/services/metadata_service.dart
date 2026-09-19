@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:exif/exif.dart';
 
 import '../models/photo_metadata.dart';
+import 'photo_service.dart';
 
 class MetadataService {
   static final Map<String, (double, double)?> _gpsCache = {};
@@ -19,16 +20,21 @@ class MetadataService {
   static Future<(double, double)?> readGps(String path) async {
     if (_gpsCache.containsKey(path)) return _gpsCache[path];
     try {
-      final meta = await _readExif(path);
-      if (meta.gpsLatitude == null || meta.gpsLongitude == null) {
-        _gpsCache[path] = null;
-        return null;
+      final lower = path.toLowerCase();
+      (double, double)? gps;
+      if (lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.jpe') ||
+          lower.endsWith('.jfif')) {
+        gps = await PhotoService.readGpsQuick(path);
+      } else {
+        final meta = await _readExif(path);
+        if (meta.gpsLatitude != null &&
+            meta.gpsLongitude != null &&
+            !(meta.gpsLatitude == 0.0 && meta.gpsLongitude == 0.0)) {
+          gps = (meta.gpsLatitude!, meta.gpsLongitude!);
+        }
       }
-      if (meta.gpsLatitude == 0.0 && meta.gpsLongitude == 0.0) {
-        _gpsCache[path] = null;
-        return null;
-      }
-      final gps = (meta.gpsLatitude!, meta.gpsLongitude!);
       _gpsCache[path] = gps;
       return gps;
     } catch (_) {

@@ -37,13 +37,19 @@ class _MapScreenState extends State<MapScreen> {
   };
 
   List<_GeoPoint> _points = [];
-  List<_GeoPoint> _visiblePoints = [];
   bool _scanning = false;
   int _scanned = 0;
   int _total = 0;
   final MapController _mapController = MapController();
   bool _focused = false;
-  bool _mapReady = false;
+
+  late final MapOptions _mapOptions = MapOptions(
+    initialCenter: const LatLng(20, 0),
+    initialZoom: 2,
+    interactionOptions: const InteractionOptions(
+      flags: InteractiveFlag.all,
+    ),
+  );
 
   @override
   void initState() {
@@ -84,12 +90,8 @@ class _MapScreenState extends State<MapScreen> {
       _scanned = photos.length - toScan.length;
       _total = photos.length;
       _points = knownPoints;
-      _visiblePoints = knownPoints;
       _focused = false;
     });
-    if (_mapReady && knownPoints.isNotEmpty) {
-      _updateVisiblePoints(_mapController.camera);
-    }
 
     const batch = 250;
     for (var i = 0; i < toScan.length; i += batch) {
@@ -126,31 +128,10 @@ class _MapScreenState extends State<MapScreen> {
         });
       }
 
-      if (_mapReady) _updateVisiblePoints(_mapController.camera);
       await Future<void>.delayed(Duration.zero);
     }
 
     if (mounted) setState(() => _scanning = false);
-  }
-
-  void _updateVisiblePoints(MapCamera camera) {
-    if (_points.isEmpty) {
-      if (_visiblePoints.isNotEmpty) {
-        setState(() => _visiblePoints = []);
-      }
-      return;
-    }
-    final bounds = camera.visibleBounds;
-    final visible = <_GeoPoint>[];
-    for (final point in _points) {
-      if (bounds.contains(LatLng(point.lat, point.lon))) visible.add(point);
-    }
-    final unchanged = visible.length == _visiblePoints.length &&
-        (visible.isEmpty ||
-            (visible.first.photo.path == _visiblePoints.first.photo.path &&
-                visible.last.photo.path == _visiblePoints.last.photo.path));
-    if (unchanged) return;
-    setState(() => _visiblePoints = visible);
   }
 
   @override
@@ -182,22 +163,7 @@ class _MapScreenState extends State<MapScreen> {
       ),
       body: FlutterMap(
         mapController: _mapController,
-        options: MapOptions(
-          initialCenter: _points.isEmpty
-              ? const LatLng(20, 0)
-              : LatLng(_points.first.lat, _points.first.lon),
-          initialZoom: _points.isEmpty ? 2 : 6,
-          onMapReady: () {
-            _mapReady = true;
-            _updateVisiblePoints(_mapController.camera);
-          },
-          onPositionChanged: (camera, hasGesture) {
-            _updateVisiblePoints(camera);
-          },
-          interactionOptions: const InteractionOptions(
-            flags: InteractiveFlag.all,
-          ),
-        ),
+        options: _mapOptions,
         children: [
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -205,7 +171,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
           MarkerLayer(
             markers: [
-              for (final point in _visiblePoints)
+              for (final point in _points)
                 Marker(
                   point: LatLng(point.lat, point.lon),
                   width: 36,

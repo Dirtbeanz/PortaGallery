@@ -26,9 +26,11 @@ class ThumbnailService {
     return dir;
   }
 
+  static const int generatorVersion = 2;
+
   static String key(PhotoItem photo) {
     final raw =
-        '${photo.path}|${photo.sizeBytes}|${photo.modifiedAt.millisecondsSinceEpoch}';
+        'v$generatorVersion|${photo.path}|${photo.sizeBytes}|${photo.modifiedAt.millisecondsSinceEpoch}';
     var h = 0x811c9dc5;
     for (final c in raw.codeUnits) {
       h ^= c;

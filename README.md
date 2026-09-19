@@ -37,9 +37,10 @@ experience — albums, favorites, search, zoom, tags, and more.
   ffmpeg-generated thumbnails on Linux.
 - **Map view** — browse geotagged photos on an OpenStreetMap map, auto-centers
   on your most recent photo's location. Map tiles are downloaded from
-  OpenStreetMap and need an internet connection. GPS extraction runs in a
-  background isolate, results are cached for the session, and only markers in
-  the current viewport are built, so panning and zooming stay responsive.
+  OpenStreetMap and need an internet connection. GPS coordinates are parsed
+  directly from the EXIF header (first 128KB only, instead of reading whole
+  files), run in a background isolate, and cached for the session, so the map
+  becomes usable quickly and panning stays responsive.
 - **Date-preserving import** — imported photos keep the source file's modified
   date, and EXIF date taken is used for sorting and grouping when present.
 - **Metadata** — view EXIF details (dimensions, date taken, camera, ISO,
@@ -71,9 +72,14 @@ experience — albums, favorites, search, zoom, tags, and more.
 Designed to keep large libraries responsive:
 
 - **Lazy timeline** — one list delegate builds nearby headers and photo rows,
-  rather than creating an offscreen first row for every date section. An
-  18,000-item widget regression test checks that initial thumbnail requests
-  stay below 100 for its viewport and zoom configuration.
+  rather than creating an offscreen first row for every date section. Only the
+  visible rows plus a small margin are kept built. An 18,000-item widget
+  regression test checks that initial thumbnail requests stay below 100 for
+  its viewport and zoom configuration.
+- **Stable layout** — aspect ratios and EXIF dates are persisted in the SQLite
+  cache, so rows keep their proportions from the first paint. Aspect-ratio
+  updates from newly generated thumbnails are coalesced into a single relayout
+  instead of one per thumbnail.
 - **Thumbnail-only grid** — missing or failed thumbnails show placeholders;
   grid cells never fall back to decoding original photos.
 - **Cached startup** — SQLite supplies the initial photo list, filtered to the
@@ -143,7 +149,10 @@ decoding in this Linux build.
   HEVC playback has not been verified by the automated tests. Use **Open with
   system player** when needed.
 - Existing thumbnail files may retain older cropping or incorrect dimensions;
-  the grid cannot restore pixels missing from a cached thumbnail.
+  the grid cannot restore pixels missing from a cached thumbnail. The
+  thumbnail cache now includes a generator version, so previews created by
+  older builds (including previously square-cropped ones) are regenerated on
+  first use with this version.
 - Temporary diagnostic logging captures Flutter/Dart errors, scan summaries,
   memory-pressure notifications, and video errors. It cannot reliably capture
   native process crashes or OS memory kills; those may require system logs.

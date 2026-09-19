@@ -239,7 +239,7 @@ class _PhotoGridState extends State<PhotoGrid> {
               radius: const Radius.circular(10),
               child: CustomScrollView(
                 controller: _scrollController,
-                cacheExtent: 800,
+                cacheExtent: 400,
                 slivers: [
                   SliverList(
                     delegate: SliverChildBuilderDelegate(
