@@ -334,6 +334,11 @@ class GalleryProvider extends ChangeNotifier {
           if (stat.type == FileSystemEntityType.file && stat.size > 0) {
             final dims = PhotoService.readDimensions(candidate);
             if (dims != null && dims.$1 > 0 && dims.$2 > 0) {
+              // Legacy thumbnails were center-cropped to large squares.
+              // Skip those so they regenerate with the photo's real aspect
+              // ratio, while all correct-aspect cached thumbnails still load
+              // instantly.
+              if (dims.$1 == dims.$2 && dims.$1 > 400) return;
               paths[entry.path] = candidate;
               ratios[entry.path] = dims.$1 / dims.$2;
             }
@@ -355,7 +360,6 @@ class GalleryProvider extends ChangeNotifier {
     final (paths, ratios) = await compute(
         _readCachedThumbnails, (directory: dir.path, entries: entries));
     if (!_isCurrent(generation)) return;
-    var ratiosChanged = false;
     for (final photo in snapshot) {
       if (!identical(_photoIndex[photo.path], photo)) continue;
       final target = paths[photo.path];
@@ -363,19 +367,15 @@ class GalleryProvider extends ChangeNotifier {
       _thumbPaths[photo.path] = target;
       _thumbFailed.remove(photo.path);
       final ratio = ratios[photo.path];
-      if (ratio != null && _setAspectRatio(photo, ratio)) {
-        ratiosChanged = true;
-      }
+      if (ratio != null) _setAspectRatio(photo, ratio);
     }
-    if (ratiosChanged) layoutVersion++;
   }
 
-  bool _setAspectRatio(PhotoItem photo, double ratio) {
-    if (!ratio.isFinite || ratio <= 0) return false;
-    if (getAspectRatio(photo) == ratio) return false;
+  void _setAspectRatio(PhotoItem photo, double ratio) {
+    if (!ratio.isFinite || ratio <= 0) return;
+    if (getAspectRatio(photo) != ratio) layoutVersion++;
     _aspectRatios[photo.path] = ratio;
     photo.aspectRatio = ratio;
-    return true;
   }
 
   void requestThumbnails(List<PhotoItem> photos) {
@@ -398,8 +398,6 @@ class GalleryProvider extends ChangeNotifier {
     if (_thumbing || _disposed) return;
     _thumbing = true;
     var changed = 0;
-    var ratiosChanged = false;
-    var lastNotify = DateTime.now();
     try {
       while (!_disposed && !isLoading && _thumbPending.isNotEmpty) {
         final generation = _generation;
@@ -439,30 +437,18 @@ class GalleryProvider extends ChangeNotifier {
             _thumbFailed.add(path);
           } else {
             _thumbPaths[path] = target;
-            if (ratio != null && _setAspectRatio(photo, ratio)) {
-              ratiosChanged = true;
-            }
+            if (ratio != null) _setAspectRatio(photo, ratio);
             changed++;
           }
         }));
-        // Notify in batches so the grid does not re-lay out the whole library
-        // for every single thumbnail. Aspect-ratio version bumps are coalesced
-        // into the same notification.
-        final elapsed = DateTime.now().difference(lastNotify);
-        if (changed >= 12 ||
-            (changed > 0 && elapsed >= const Duration(milliseconds: 600))) {
-          if (ratiosChanged) {
-            layoutVersion++;
-            ratiosChanged = false;
-          }
+        // Batch notifications to avoid re-laying out the grid on every thumbnail.
+        if (changed >= 12) {
           notifyListeners();
-          lastNotify = DateTime.now();
           changed = 0;
         }
       }
     } finally {
       _thumbing = false;
-      if (ratiosChanged) layoutVersion++;
       notifyListeners();
     }
   }

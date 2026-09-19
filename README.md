@@ -76,10 +76,9 @@ Designed to keep large libraries responsive:
   visible rows plus a small margin are kept built. An 18,000-item widget
   regression test checks that initial thumbnail requests stay below 100 for
   its viewport and zoom configuration.
-- **Stable layout** — aspect ratios and EXIF dates are persisted in the SQLite
-  cache, so rows keep their proportions from the first paint. Aspect-ratio
-  updates from newly generated thumbnails are coalesced into a single relayout
-  instead of one per thumbnail.
+- **Correct-aspect previews** — thumbnails preserve each photo's aspect ratio.
+  Legacy thumbnails that were center-cropped to large squares are detected and
+  regenerated, while all other cached thumbnails load instantly.
 - **Thumbnail-only grid** — missing or failed thumbnails show placeholders;
   grid cells never fall back to decoding original photos.
 - **Cached startup** — SQLite supplies the initial photo list, filtered to the
@@ -149,10 +148,9 @@ decoding in this Linux build.
   HEVC playback has not been verified by the automated tests. Use **Open with
   system player** when needed.
 - Existing thumbnail files may retain older cropping or incorrect dimensions;
-  the grid cannot restore pixels missing from a cached thumbnail. The
-  thumbnail cache now includes a generator version, so previews created by
-  older builds (including previously square-cropped ones) are regenerated on
-  first use with this version.
+  the grid cannot restore pixels missing from a cached thumbnail. Legacy
+  square-cropped previews (large square thumbnails from older builds) are
+  skipped and regenerated with the correct aspect ratio.
 - Temporary diagnostic logging captures Flutter/Dart errors, scan summaries,
   memory-pressure notifications, and video errors. It cannot reliably capture
   native process crashes or OS memory kills; those may require system logs.
