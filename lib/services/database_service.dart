@@ -27,7 +27,7 @@ class DatabaseService {
     _db = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 6,
+        version: 7,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE favorites (
@@ -78,6 +78,12 @@ class DatabaseService {
               trashed_path TEXT PRIMARY KEY,
               original_path TEXT NOT NULL,
               deleted_at INTEGER NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE rotation_overrides (
+              path TEXT PRIMARY KEY,
+              quarter_turns INTEGER NOT NULL
             )
           ''');
         },
@@ -138,6 +144,14 @@ class DatabaseService {
                 'ALTER TABLE photo_cache ADD COLUMN aspect_ratio REAL NOT NULL DEFAULT 1.0');
             await db.execute(
                 'ALTER TABLE photo_cache ADD COLUMN date_taken INTEGER');
+          }
+          if (oldVersion < 7) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS rotation_overrides (
+                path TEXT PRIMARY KEY,
+                quarter_turns INTEGER NOT NULL
+              )
+            ''');
           }
         },
       ),
@@ -283,6 +297,31 @@ class DatabaseService {
           DateTime.fromMillisecondsSinceEpoch(row['date_taken'] as int);
     }
     return map;
+  }
+
+  Future<Map<String, int>> getRotationOverrides() async {
+    final db = await database;
+    final rows = await db.query('rotation_overrides');
+    final map = <String, int>{};
+    for (final row in rows) {
+      map[row['path'] as String] = row['quarter_turns'] as int;
+    }
+    return map;
+  }
+
+  Future<void> setRotationOverride(String path, int? quarterTurns) async {
+    final db = await database;
+    final turns = (quarterTurns ?? 0) % 4;
+    if (turns == 0) {
+      await db
+          .delete('rotation_overrides', where: 'path = ?', whereArgs: [path]);
+      return;
+    }
+    await db.insert(
+      'rotation_overrides',
+      {'path': path, 'quarter_turns': turns},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   Future<void> setDateOverride(String path, DateTime? date) async {

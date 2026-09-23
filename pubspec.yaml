@@ -1,7 +1,7 @@
 name: photo_gallery
 description: "PortaGallery - a modern photo gallery for external drives."
 publish_to: 'none'
-version: 1.6.16
+version: 1.6.17
 
 environment:
   sdk: ^3.7.2
@@ -28,6 +28,8 @@ dependencies:
   flutter_map: ^8.3.2
   latlong2: ^0.10.1
   flutter_image_compress: ^2.5.1
+  package_info_plus: ^9.0.1
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

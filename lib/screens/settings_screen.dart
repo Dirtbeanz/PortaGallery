@@ -2,9 +2,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/gallery_provider.dart';
 import '../services/config_service.dart';
@@ -73,7 +75,14 @@ class SettingsScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.photo),
                 title: const Text('Photos'),
-                trailing: Text('${provider.photos.length}'),
+                trailing: Text(
+                    '${provider.photos.where((p) => !p.isVideo).length}'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam_outlined),
+                title: const Text('Videos'),
+                trailing: Text(
+                    '${provider.photos.where((p) => p.isVideo).length}'),
               ),
               ListTile(
                 leading: const Icon(Icons.album),
@@ -152,6 +161,14 @@ class SettingsScreen extends StatelessWidget {
                     'Crash and scan logs for troubleshooting (temporary)'),
                 onTap: () => _showLogLocation(context),
               ),
+            ],
+          )),
+          const SizedBox(height: 16),
+          _section(context, 'About',
+              child: Column(
+            children: const [
+              _VersionTile(),
+              _GitHubTile(),
             ],
           )),
         ],
@@ -340,5 +357,63 @@ class SettingsScreen extends StatelessWidget {
   void _snack(BuildContext context, String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+class _VersionTile extends StatefulWidget {
+  const _VersionTile();
+
+  @override
+  State<_VersionTile> createState() => _VersionTileState();
+}
+
+class _VersionTileState extends State<_VersionTile> {
+  String _version = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() {
+        _version = info.buildNumber.isEmpty
+            ? info.version
+            : '${info.version} (build ${info.buildNumber})';
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: const Icon(Icons.info_outline),
+      title: const Text('Version'),
+      subtitle: Text(_version.isEmpty ? '…' : _version),
+    );
+  }
+}
+
+class _GitHubTile extends StatelessWidget {
+  const _GitHubTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: const Icon(Icons.code),
+      title: const Text('GitHub repository'),
+      subtitle: const Text('github.com/Dirtbeanz/PortaGallery'),
+      onTap: () async {
+        try {
+          await launchUrl(
+            Uri.parse('https://github.com/Dirtbeanz/PortaGallery'),
+            mode: LaunchMode.externalApplication,
+          );
+        } catch (_) {}
+      },
+    );
   }
 }

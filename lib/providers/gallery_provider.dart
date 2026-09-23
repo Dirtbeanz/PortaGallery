@@ -36,6 +36,9 @@ class GalleryProvider extends ChangeNotifier {
   Map<String, DateTime> _dateOverrides = {};
   Map<String, DateTime> get dateOverrides => _dateOverrides;
 
+  Map<String, int> _rotationOverrides = {};
+  int rotationOf(String path) => _rotationOverrides[path] ?? 0;
+
   List<TrashItem> _trashItems = [];
   List<TrashItem> get trashItems => _trashItems;
   int get trashCount => _trashItems.length;
@@ -106,6 +109,7 @@ class GalleryProvider extends ChangeNotifier {
     _notes = await _database.getAllNotes();
     _virtualAlbums = await _database.getVirtualAlbums();
     _dateOverrides = await _database.getDateOverrides();
+    _rotationOverrides = await _database.getRotationOverrides();
     _trashItems = await _database.getTrashItems();
     if (!_isCurrent(generation)) return;
     if (isConfigured) {
@@ -246,7 +250,7 @@ class GalleryProvider extends ChangeNotifier {
           // Videos (and files whose header could not be read) keep the
           // ratio learned from their thumbnail.
           if (photo.isVideo || photo.aspectRatio == 1.0) {
-            photo.aspectRatio = getAspectRatio(old);
+            photo.aspectRatio = rawAspectRatio(old);
           }
         } else if (old != null && getAspectRatio(old) != photo.aspectRatio) {
           ratiosChanged = true;
@@ -366,9 +370,7 @@ class GalleryProvider extends ChangeNotifier {
           final dims = result[photo.path];
           if (dims == null) continue;
           final ratio = dims.$1 / dims.$2;
-          if (ratio.isFinite && ratio > 0 && getAspectRatio(photo) != ratio) {
-            _aspectRatios[photo.path] = ratio;
-            photo.aspectRatio = ratio;
+          if (ratio.isFinite && ratio > 0 && _setAspectRatio(photo, ratio)) {
             changed = true;
           }
         }
@@ -444,11 +446,13 @@ class GalleryProvider extends ChangeNotifier {
     }
   }
 
-  void _setAspectRatio(PhotoItem photo, double ratio) {
-    if (!ratio.isFinite || ratio <= 0) return;
-    if (getAspectRatio(photo) != ratio) layoutVersion++;
+  bool _setAspectRatio(PhotoItem photo, double ratio) {
+    if (!ratio.isFinite || ratio <= 0) return false;
+    if (rawAspectRatio(photo) == ratio) return false;
+    layoutVersion++;
     _aspectRatios[photo.path] = ratio;
     photo.aspectRatio = ratio;
+    return true;
   }
 
   void requestThumbnails(List<PhotoItem> photos) {
@@ -636,10 +640,27 @@ class GalleryProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  double rawAspectRatio(PhotoItem photo) =>
+      _aspectRatios[photo.path] ?? photo.aspectRatio;
+
   double getAspectRatio(PhotoItem photo) {
-    final cached = _aspectRatios[photo.path];
-    if (cached != null) return cached;
-    return photo.aspectRatio;
+    final raw = rawAspectRatio(photo);
+    final turns = rotationOf(photo.path);
+    if ((turns == 1 || turns == 3) && raw > 0) return 1 / raw;
+    return raw;
+  }
+
+  Future<void> setRotation(PhotoItem photo, int quarterTurns) async {
+    final turns = quarterTurns % 4;
+    if (turns == 0) {
+      _rotationOverrides.remove(photo.path);
+    } else {
+      _rotationOverrides[photo.path] = turns;
+    }
+    await _database.setRotationOverride(photo.path, turns);
+    layoutVersion++;
+    _sectionsDirty = true;
+    notifyListeners();
   }
 
   List<({String header, List<PhotoItem> photos})> get dateSections {

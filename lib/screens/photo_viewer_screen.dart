@@ -120,6 +120,10 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                     PopupMenuItem(value: 'details', child: Text('Details')),
                     PopupMenuItem(value: 'notes', child: Text('Tags & comment')),
                     PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    PopupMenuItem(
+                        value: 'rotate_left', child: Text('Rotate left')),
+                    PopupMenuItem(
+                        value: 'rotate_right', child: Text('Rotate right')),
                     PopupMenuItem(value: 'delete', child: Text('Delete')),
                   ],
                 ),
@@ -146,6 +150,25 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                     ),
                     minScale: PhotoViewComputedScale.contained,
                     maxScale: PhotoViewComputedScale.covered * 2,
+                  );
+                }
+                final turns = provider.rotationOf(photo.path);
+                if (turns != 0) {
+                  return PhotoViewGalleryPageOptions.customChild(
+                    child: RotatedBox(
+                      quarterTurns: turns,
+                      child: Image(
+                        image: _imageProvider(photo, context),
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stack) => const Center(
+                          child: Icon(Icons.broken_image_outlined,
+                              color: Colors.white54, size: 64),
+                        ),
+                      ),
+                    ),
+                    minScale: PhotoViewComputedScale.contained,
+                    maxScale: PhotoViewComputedScale.covered * 3,
+                    onTapUp: (context, details, controllerValue) => _toggleUi(),
                   );
                 }
                 return PhotoViewGalleryPageOptions(
@@ -237,10 +260,23 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
       case 'rename':
         _rename(context);
         break;
+      case 'rotate_left':
+        _rotate(-1);
+        break;
+      case 'rotate_right':
+        _rotate(1);
+        break;
       case 'delete':
         _delete(context);
         break;
     }
+  }
+
+  Future<void> _rotate(int delta) async {
+    final provider = context.read<GalleryProvider>();
+    final current = provider.rotationOf(_current.path);
+    await provider.setRotation(_current, current + delta);
+    if (mounted) setState(() {});
   }
 
   Future<void> _download(BuildContext context) async {

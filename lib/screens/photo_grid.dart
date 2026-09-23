@@ -32,6 +32,8 @@ class PhotoGrid extends StatefulWidget {
 }
 
 class _PhotoGridState extends State<PhotoGrid> {
+  static const double _headerHeight = 46;
+
   final ScrollController _scrollController = ScrollController();
   Timer? _hideTimer;
   String? _activeLabel;
@@ -214,7 +216,7 @@ class _PhotoGridState extends State<PhotoGrid> {
           for (var s = 0; s < widget.sections.length; s++) {
             _sectionStarts.add(offset);
             _entries.add((section: s, row: -1));
-            offset += 46;
+            offset += _headerHeight;
             final rows = _layoutCache![s];
             for (var r = 0; r < rows.length; r++) {
               _entries.add((section: s, row: r));
@@ -353,6 +355,8 @@ class _PhotoGridState extends State<PhotoGrid> {
                   index: index * 10 + j,
                   selected: widget.selectedPaths.contains(row.items[j].photo.path),
                   thumbPath: provider.thumbPathOrNull(row.items[j].photo),
+                  quarterTurns:
+                      provider.rotationOf(row.items[j].photo.path),
                   onTap: widget.onPhotoTap,
                   onLongPress: widget.onPhotoLongPress,
                   viewerPhotos: widget.viewerPhotos,
@@ -384,15 +388,23 @@ class _DateHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 20, 12, 8),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.primary,
-          fontWeight: FontWeight.w600,
-          fontSize: 13,
-          letterSpacing: 0.5,
+    return SizedBox(
+      height: _PhotoGridState._headerHeight,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              letterSpacing: 0.5,
+            ),
+          ),
         ),
       ),
     );
@@ -404,6 +416,7 @@ class _PhotoTile extends StatelessWidget {
   final int index;
   final bool selected;
   final String? thumbPath;
+  final int quarterTurns;
   final ValueChanged<PhotoItem>? onTap;
   final ValueChanged<PhotoItem>? onLongPress;
   final List<PhotoItem>? viewerPhotos;
@@ -413,6 +426,7 @@ class _PhotoTile extends StatelessWidget {
     required this.index,
     this.selected = false,
     this.thumbPath,
+    this.quarterTurns = 0,
     this.onTap,
     this.onLongPress,
     this.viewerPhotos,
@@ -431,6 +445,7 @@ class _PhotoTile extends StatelessWidget {
             _Thumbnail(
               photo: photo,
               thumbPath: thumbPath,
+              quarterTurns: quarterTurns,
             ),
             if (selected)
               Container(
@@ -507,10 +522,12 @@ class _PhotoTile extends StatelessWidget {
 class _Thumbnail extends StatelessWidget {
   final PhotoItem photo;
   final String? thumbPath;
+  final int quarterTurns;
 
   const _Thumbnail({
     required this.photo,
     this.thumbPath,
+    this.quarterTurns = 0,
   });
 
   @override
@@ -518,29 +535,34 @@ class _Thumbnail extends StatelessWidget {
     // Consistent cacheWidth across all zoom levels to prevent re-decode.
     const gridCacheWidth = 200;
 
+    Widget wrap(Widget child) {
+      if (quarterTurns == 0) return child;
+      return RotatedBox(quarterTurns: quarterTurns, child: child);
+    }
+
     if (photo.isVideo) {
       if (thumbPath != null) {
-        return Image.file(
+        return wrap(Image.file(
           File(thumbPath!),
           fit: BoxFit.contain,
           alignment: Alignment.center,
           filterQuality: FilterQuality.low,
           cacheWidth: gridCacheWidth,
           errorBuilder: (context, error, stack) => _placeholder(),
-        );
+        ));
       }
       return _placeholder();
     }
 
     if (thumbPath != null) {
-      return Image.file(
+      return wrap(Image.file(
         File(thumbPath!),
         fit: BoxFit.contain,
         alignment: Alignment.center,
         filterQuality: FilterQuality.low,
         cacheWidth: gridCacheWidth,
         errorBuilder: (context, error, stack) => _fallback(context),
-      );
+      ));
     }
 
     return _fallback(context);
