@@ -10,7 +10,7 @@ List<int> _u32le(int v) =>
     [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF];
 List<int> _u16be(int v) => [(v >> 8) & 0xFF, v & 0xFF];
 
-Uint8List _jpegWithExifThumb() {
+Uint8List _jpegWithExifThumb({int orientation = 1}) {
   final thumb = <int>[
     0xFF, 0xD8,
     0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03,
@@ -20,13 +20,15 @@ Uint8List _jpegWithExifThumb() {
     0xFF, 0xD9,
   ];
 
-  const ifd1 = 14;
-  const thumbOffset = 44;
+  const ifd1 = 26;
+  const thumbOffset = 56;
   final tiff = <int>[
     0x49, 0x49, // II
     ..._u16le(0x002A),
     ..._u32le(8), // IFD0 offset
-    ..._u16le(0), // IFD0 entry count
+    ..._u16le(1), // IFD0 entry count
+    ..._u16le(0x0112), ..._u16le(3), ..._u32le(1), ..._u16le(orientation),
+    0, 0,
     ..._u32le(ifd1), // next IFD (IFD1) offset
     ..._u16le(2), // IFD1 entry count
     ..._u16le(0x0201), ..._u16le(4), ..._u32le(1), ..._u32le(thumbOffset),
@@ -67,6 +69,16 @@ void main() {
     expect(orientation, 1);
     expect(bytes[0], 0xFF);
     expect(bytes[1], 0xD8);
+  });
+
+  test('reports the original EXIF orientation with the thumbnail', () async {
+    final file = File(p.join(root.path, 'rotated.jpg'));
+    file.writeAsBytesSync(_jpegWithExifThumb(orientation: 6));
+
+    final result = await PhotoService.readExifThumbnail(file.path);
+
+    expect(result, isNotNull);
+    expect(result!.$4, 6);
   });
 
   test('returns null when the JPEG has no embedded thumbnail', () async {

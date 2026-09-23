@@ -530,22 +530,20 @@ class PhotoService {
 
   static int exifOrientation(List<int> b, int start, int length) {
     try {
-      if (start + 6 + 8 > b.length || length < 14) return 1;
-      if (!(b[start] == 0x45 && b[start + 1] == 0x78 &&
-          b[start + 2] == 0x69 && b[start + 3] == 0x66)) {
+      if (start + 14 > b.length || length < 14) return 1;
+      if (!(b[start] == 0x45 &&
+          b[start + 1] == 0x78 &&
+          b[start + 2] == 0x69 &&
+          b[start + 3] == 0x66)) {
         return 1;
       }
-      var p = start + 6;
-      final little = b[p] == 0x49;
-      p += 2;
-      final tag = u16(b, p, little);
-      p += 2;
-      final entryCount = u16(b, p, little);
-      p += 2;
-      final isTiff = tag == 0x002A || tag == 0x2A00;
-      if (!isTiff) return 1;
-      final ifdOffset = u32(b, p, little);
-      var ifd = start + 6 + ifdOffset;
+      final tiff = start + 6;
+      final little = b[tiff] == 0x49;
+      if (u16(b, tiff + 2, little) != 0x002A) return 1;
+      final ifd0 = tiff + u32(b, tiff + 4, little);
+      if (ifd0 + 2 > b.length) return 1;
+      final entryCount = u16(b, ifd0, little);
+      var ifd = ifd0 + 2;
       for (var i = 0; i < entryCount && ifd + 12 <= b.length; i++) {
         final eTag = u16(b, ifd, little);
         final eType = u16(b, ifd + 2, little);
