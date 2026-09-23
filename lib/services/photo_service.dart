@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
@@ -350,35 +351,7 @@ class PhotoService {
       if (bytes.length < 24) return null;
 
       if (bytes[0] == 0xFF && bytes[1] == 0xD8) {
-        var off = 2;
-        var orientation = 1;
-        var w = 0;
-        var h = 0;
-        while (off + 9 < bytes.length) {
-          if (bytes[off] != 0xFF) { off++; continue; }
-          final m = bytes[off + 1];
-          if (m == 0xD8 || m == 0xD9) { off += 2; continue; }
-          if (m >= 0xD0 && m <= 0xDA) { off += 2; continue; }
-          final len = (bytes[off + 2] << 8) + bytes[off + 3];
-          if (m == 0xE1 && off + 2 + len <= bytes.length) {
-            orientation = exifOrientation(bytes, off + 4, len - 2);
-          }
-          if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
-            h = (bytes[off + 5] << 8) + bytes[off + 6];
-            w = (bytes[off + 7] << 8) + bytes[off + 8];
-            if (h > 0 && w > 0) {
-              if (orientation >= 5 && orientation <= 8) {
-                final t = w;
-                w = h;
-                h = t;
-              }
-              return (w, h);
-            }
-            break;
-          }
-          off += 2 + len;
-        }
-        return null;
+        return _jpegSize(bytes);
       }
 
       if (bytes[0] == 0x89 && bytes[1] == 0x50) {
@@ -416,6 +389,143 @@ class PhotoService {
     }
 
     return null;
+  }
+
+  static (int, int)? _jpegSize(List<int> bytes) {
+    var off = 2;
+    var orientation = 1;
+    var w = 0;
+    var h = 0;
+    while (off + 9 < bytes.length) {
+      if (bytes[off] != 0xFF) {
+        off++;
+        continue;
+      }
+      final m = bytes[off + 1];
+      if (m == 0xD8 || m == 0xD9) {
+        off += 2;
+        continue;
+      }
+      if (m >= 0xD0 && m <= 0xDA) {
+        off += 2;
+        continue;
+      }
+      final len = (bytes[off + 2] << 8) + bytes[off + 3];
+      if (m == 0xE1 && off + 2 + len <= bytes.length) {
+        orientation = exifOrientation(bytes, off + 4, len - 2);
+      }
+      if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
+        h = (bytes[off + 5] << 8) + bytes[off + 6];
+        w = (bytes[off + 7] << 8) + bytes[off + 8];
+        if (h > 0 && w > 0) {
+          if (orientation >= 5 && orientation <= 8) {
+            final t = w;
+            w = h;
+            h = t;
+          }
+          return (w, h);
+        }
+        break;
+      }
+      off += 2 + len;
+    }
+    return null;
+  }
+
+  /// Reads the embedded EXIF thumbnail (IFD1 JPEG) from a JPEG file.
+  /// Reads only the first 256KB instead of the whole file, which makes
+  /// thumbnail generation far cheaper on slow drives. Also returns the
+  /// image's EXIF orientation so callers can rotate the thumbnail correctly.
+  static Future<(Uint8List, int, int, int)?> readExifThumbnail(
+      String path) async {
+    RandomAccessFile? raf;
+    try {
+      raf = await File(path).open();
+      final header = await raf.read(262144);
+      if (header.length < 16 || header[0] != 0xFF || header[1] != 0xD8) {
+        return null;
+      }
+      var off = 2;
+      while (off + 9 < header.length) {
+        if (header[off] != 0xFF) {
+          off++;
+          continue;
+        }
+        final marker = header[off + 1];
+        if (marker == 0xD8 || marker == 0xD9) {
+          off += 2;
+          continue;
+        }
+        if (marker >= 0xD0 && marker <= 0xDA) {
+          off += 2;
+          continue;
+        }
+        if (off + 3 >= header.length) break;
+        final len = (header[off + 2] << 8) + header[off + 3];
+        if (len < 2) break;
+        if (marker == 0xE1) {
+          final thumb = _thumbFromApp1(header, off + 4, len - 2);
+          if (thumb != null) return thumb;
+        }
+        off += 2 + len;
+      }
+    } catch (_) {
+    } finally {
+      try {
+        await raf?.close();
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static (Uint8List, int, int, int)? _thumbFromApp1(
+      List<int> b, int start, int length) {
+    try {
+      if (length < 14 || start + 8 > b.length) return null;
+      if (!(b[start] == 0x45 &&
+          b[start + 1] == 0x78 &&
+          b[start + 2] == 0x69 &&
+          b[start + 3] == 0x66)) {
+        return null;
+      }
+      final tiff = start + 6;
+      final little = b[tiff] == 0x49;
+      final tag = u16(b, tiff + 2, little);
+      if (!(tag == 0x002A || tag == 0x2A00)) return null;
+      final ifd0 = tiff + u32(b, tiff + 4, little);
+      if (ifd0 + 2 > b.length) return null;
+      final count0 = u16(b, ifd0, little);
+      final nextOffset = ifd0 + 2 + count0 * 12;
+      if (nextOffset + 4 > b.length) return null;
+      final ifd1Offset = u32(b, nextOffset, little);
+      if (ifd1Offset == 0) return null;
+      final ifd1 = tiff + ifd1Offset;
+      if (ifd1 + 2 > b.length) return null;
+      final count1 = u16(b, ifd1, little);
+      var entry = ifd1 + 2;
+      int? thumbOffset;
+      int? thumbLength;
+      for (var i = 0; i < count1 && entry + 12 <= b.length; i++) {
+        final t = u16(b, entry, little);
+        if (t == 0x0201) thumbOffset = u32(b, entry + 8, little);
+        if (t == 0x0202) thumbLength = u32(b, entry + 8, little);
+        entry += 12;
+      }
+      if (thumbOffset == null || thumbLength == null) return null;
+      final begin = tiff + thumbOffset;
+      final end = begin + thumbLength;
+      if (thumbLength < 100 || begin < 0 || end > b.length) return null;
+      final bytes = Uint8List.fromList(b.sublist(begin, end));
+      if (bytes.length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8) {
+        return null;
+      }
+      final dims = _jpegSize(bytes);
+      if (dims == null) return null;
+      final orientation = exifOrientation(b, start, length);
+      return (bytes, dims.$1, dims.$2, orientation);
+    } catch (_) {
+      return null;
+    }
   }
 
   static int exifOrientation(List<int> b, int start, int length) {

@@ -299,7 +299,8 @@ class GalleryProvider extends ChangeNotifier {
               photo.dateTaken == null &&
               {'.jpg', '.jpeg', '.jpe', '.jfif'}.contains(
                   p.extension(photo.path).toLowerCase()))
-          .toList();
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path));
       const chunkSize = 200;
       for (var i = 0; i < candidates.length; i += chunkSize) {
         if (!_isCurrent(generation)) return;
@@ -345,7 +346,8 @@ class GalleryProvider extends ChangeNotifier {
               photo.aspectRatio == 1.0 &&
               !_aspectRatios.containsKey(photo.path) &&
               !PhotoService.isRawPath(photo.path))
-          .toList();
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path));
       if (candidates.isEmpty) return;
       const chunkSize = 500;
       for (var i = 0; i < candidates.length; i += chunkSize) {
@@ -398,22 +400,20 @@ class GalleryProvider extends ChangeNotifier {
           if (stat.type == FileSystemEntityType.file && stat.size > 0) {
             final dims = PhotoService.readDimensions(candidate);
             if (dims != null && dims.$1 > 0 && dims.$2 > 0) {
-              // Older builds produced square-cropped or square-scaled
-              // thumbnails. If the cached thumbnail is square but the
-              // original is not, regenerate it so the photo keeps its real
-              // aspect ratio. Correct-aspect cached thumbnails still load
-              // instantly.
-              if (dims.$1 == dims.$2) {
-                final original = PhotoService.readDimensions(entry.path);
-                if (original != null &&
-                    original.$1 > 0 &&
-                    original.$2 > 0 &&
-                    original.$1 != original.$2) {
-                  return;
-                }
+              final thumbRatio = dims.$1 / dims.$2;
+              // Older builds produced cropped, rotated, or squished
+              // thumbnails. Compare each cached thumbnail against the
+              // original's orientation-aware dimensions and regenerate any
+              // that do not match its aspect ratio.
+              final original = PhotoService.readDimensions(entry.path);
+              if (original != null && original.$1 > 0 && original.$2 > 0) {
+                final originalRatio = original.$1 / original.$2;
+                final relative =
+                    (thumbRatio - originalRatio).abs() / originalRatio;
+                if (relative > 0.05) return;
               }
               paths[entry.path] = candidate;
-              ratios[entry.path] = dims.$1 / dims.$2;
+              ratios[entry.path] = thumbRatio;
             }
           }
         } catch (_) {}
@@ -475,8 +475,11 @@ class GalleryProvider extends ChangeNotifier {
       while (!_disposed && !isLoading && _thumbPending.isNotEmpty) {
         final generation = _generation;
         final batch = <PhotoItem>[];
-        while (batch.length < 3 && _thumbPending.isNotEmpty) {
-          final path = _thumbPending.first;
+        // Process pending paths in sorted order so files in the same folder
+        // are read together — much friendlier to spinning disks.
+        final ordered = _thumbPending.toList()..sort();
+        for (final path in ordered) {
+          if (batch.length >= 3) break;
           _thumbPending.remove(path);
           final photo = _photoIndex[path];
           if (photo == null || _thumbPaths.containsKey(path) ||

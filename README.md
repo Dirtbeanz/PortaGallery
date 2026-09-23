@@ -81,8 +81,17 @@ Designed to keep large libraries responsive:
   a background pass after scanning, so photos are laid out with their real
   aspect ratio without blocking thumbnail loading. Legacy square-cropped
   thumbnails are detected against the original and regenerated.
+- **Fast preview loading** — JPEG previews reuse the camera's embedded EXIF
+  thumbnail when available, reading only 256KB per photo instead of decoding
+  the whole original. The EXIF orientation is applied, and photos with
+  unusual orientations fall back to full decoding.
+- **Drive-friendly ordering** — thumbnail generation and header-reading passes
+  work through files in path order, so reads are sequential instead of
+  jumping around the disk.
 - **Thumbnail-only grid** — missing or failed thumbnails show placeholders;
-  grid cells never fall back to decoding original photos.
+  grid cells never fall back to decoding original photos. Cached thumbnails
+  are validated against the original's aspect ratio, so cropped, rotated, or
+  squished thumbnails from older builds are regenerated.
 - **Cached startup** — SQLite supplies the initial photo list, filtered to the
   selected library root, while a background rescan checks for changes.
 - **Background indexing** — directory scanning, existing-thumbnail discovery,
@@ -291,4 +300,4 @@ If you like this project and want to support its development:
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)

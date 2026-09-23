@@ -11,8 +11,36 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 import '../models/photo_item.dart';
+import 'photo_service.dart';
 
 class ThumbnailService {
+  /// Rotates a JPEG according to an EXIF orientation (3, 6, or 8) and
+  /// re-encodes it without EXIF so viewers do not apply orientation again.
+  @visibleForTesting
+  static Uint8List? rotateJpeg(Uint8List bytes, int orientation) {
+    try {
+      var decoded = img.decodeJpg(bytes);
+      if (decoded == null) return null;
+      switch (orientation) {
+        case 3:
+          decoded = img.copyRotate(decoded, angle: 180);
+          break;
+        case 6:
+          decoded = img.copyRotate(decoded, angle: 90);
+          break;
+        case 8:
+          decoded = img.copyRotate(decoded, angle: 270);
+          break;
+        default:
+          return null;
+      }
+      decoded.exif.clear();
+      return Uint8List.fromList(img.encodeJpg(decoded, quality: 80));
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Directory? _dir;
 
   static Future<Directory> cacheDir() async {
@@ -70,6 +98,30 @@ class ThumbnailService {
   }
 
   static Future<bool> _imageThumb(PhotoItem photo, String target) async {
+    // Fast path: many JPEGs carry an embedded EXIF thumbnail. Reusing it
+    // only reads the file header (256KB) instead of decoding the whole
+    // original, which is a large win on slow HDDs. The embedded pixels are
+    // stored unrotated, so the original's EXIF orientation is applied here.
+    final embedded = await PhotoService.readExifThumbnail(photo.path);
+    if (embedded != null) {
+      final (bytes, width, height, orientation) = embedded;
+      final longest = width > height ? width : height;
+      if (longest >= 128 && bytes.length <= 2 * 1024 * 1024) {
+        Uint8List? out = bytes;
+        if (orientation == 3 || orientation == 6 || orientation == 8) {
+          out = await Isolate.run<Uint8List?>(
+              () => ThumbnailService.rotateJpeg(bytes, orientation));
+        } else if (orientation != 1) {
+          out = null;
+        }
+        if (out != null) {
+          try {
+            await File(target).writeAsBytes(out, flush: true);
+            return true;
+          } catch (_) {}
+        }
+      }
+    }
     if (await _imageThumbFlutter(photo.path, target)) return true;
     if (!kIsWeb && Platform.isAndroid) {
       return await _compressPlatform(photo.path, target);
