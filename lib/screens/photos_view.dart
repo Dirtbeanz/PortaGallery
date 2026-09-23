@@ -29,7 +29,8 @@ class _PhotosViewState extends State<PhotosView> {
     final provider = context.watch<GalleryProvider>();
 
     final sections = provider.dateSections;
-    final rowHeight = provider.rowHeightForZoom();
+    final rowHeight =
+        provider.rowHeightForZoom(MediaQuery.of(context).size.width);
 
     return Column(
       children: [

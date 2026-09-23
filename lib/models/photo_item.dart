@@ -21,8 +21,6 @@ class PhotoItem {
     this.aspectRatio = 1.0,
   });
 
-  String get id => path;
-
   String get extension => path.contains('.')
       ? path.substring(path.lastIndexOf('.'))
       : '';

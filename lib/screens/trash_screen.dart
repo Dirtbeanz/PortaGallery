@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/gallery_provider.dart';
+import '../utils/date_labels.dart';
 
 class TrashScreen extends StatefulWidget {
   const TrashScreen({super.key});
@@ -72,7 +73,7 @@ class _TrashScreenState extends State<TrashScreen> {
                   title: Text(item.name,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text(
-                    'Deleted ${_formatDate(item.deletedAt)}',
+                    'Deleted ${formatDateTime(item.deletedAt)}',
                     style: const TextStyle(fontSize: 12),
                   ),
                   onTap: () => setState(() {
@@ -133,12 +134,5 @@ class _TrashScreenState extends State<TrashScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Permanently deleted $count item(s)')),
     );
-  }
-
-  String _formatDate(DateTime dt) {
-    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-'
-        '${dt.day.toString().padLeft(2, '0')} '
-        '${dt.hour.toString().padLeft(2, '0')}:'
-        '${dt.minute.toString().padLeft(2, '0')}';
   }
 }

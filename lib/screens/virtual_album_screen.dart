@@ -68,7 +68,8 @@ class _VirtualAlbumScreenState extends State<VirtualAlbumScreen> {
               ? const Center(child: Text('This collection is empty'))
               : PhotoGrid(
                   sections: [ (header: '', photos: _items) ],
-                  targetRowHeight: provider.rowHeightForZoom(),
+                  targetRowHeight: provider
+                      .rowHeightForZoom(MediaQuery.of(context).size.width),
                   selectedPaths: _selected,
                   viewerPhotos: _items,
                   onPhotoTap: _selectionMode ? _toggle : _open,

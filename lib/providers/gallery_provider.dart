@@ -13,6 +13,7 @@ import '../services/database_service.dart';
 import '../services/diagnostic_log_service.dart';
 import '../services/photo_service.dart';
 import '../services/thumbnail_service.dart';
+import '../utils/date_labels.dart';
 
 class GalleryProvider extends ChangeNotifier {
   final ConfigService _config = ConfigService();
@@ -61,6 +62,7 @@ class GalleryProvider extends ChangeNotifier {
   int _generation = 0;
   Future<void> _scanTask = Future<void>.value();
   Future<void> _exifTask = Future<void>.value();
+  Future<void> _ratioTask = Future<void>.value();
   final Set<String> _thumbFailed = {};
 
   bool _isCurrent(int generation) => !_disposed && generation == _generation;
@@ -240,7 +242,12 @@ class GalleryProvider extends ChangeNotifier {
         if (old != null && _sameFile(old, photo)) {
           unchanged.add(photo.path);
           photo.dateTaken = old.dateTaken;
-          photo.aspectRatio = getAspectRatio(old);
+          // Scanned images carry their real ratio from the file header.
+          // Videos (and files whose header could not be read) keep the
+          // ratio learned from their thumbnail.
+          if (photo.isVideo || photo.aspectRatio == 1.0) {
+            photo.aspectRatio = getAspectRatio(old);
+          }
         } else if (old != null && getAspectRatio(old) != photo.aspectRatio) {
           ratiosChanged = true;
         }
@@ -273,6 +280,7 @@ class GalleryProvider extends ChangeNotifier {
       } catch (_) {}
       if (!_isCurrent(generation)) return;
       _exifTask = _exifTask.then((_) => _enrichExifDates(generation));
+      _ratioTask = _ratioTask.then((_) => _enrichAspectRatios(generation));
     } catch (_) {
     } finally {
       if (_isCurrent(generation)) {
@@ -318,6 +326,62 @@ class GalleryProvider extends ChangeNotifier {
     } catch (_) {}
   }
 
+  static Future<Map<String, (int, int)>> _readDimensionsBatch(
+      List<String> paths) async {
+    final out = <String, (int, int)>{};
+    for (final path in paths) {
+      final dims = PhotoService.readDimensions(path);
+      if (dims != null && dims.$1 > 0 && dims.$2 > 0) out[path] = dims;
+    }
+    return out;
+  }
+
+  Future<void> _enrichAspectRatios(int generation) async {
+    if (!_isCurrent(generation)) return;
+    try {
+      final candidates = _photos
+          .where((photo) =>
+              !photo.isVideo &&
+              photo.aspectRatio == 1.0 &&
+              !_aspectRatios.containsKey(photo.path) &&
+              !PhotoService.isRawPath(photo.path))
+          .toList();
+      if (candidates.isEmpty) return;
+      const chunkSize = 500;
+      for (var i = 0; i < candidates.length; i += chunkSize) {
+        if (!_isCurrent(generation)) return;
+        final chunk = candidates.sublist(
+            i,
+            i + chunkSize > candidates.length
+                ? candidates.length
+                : i + chunkSize);
+        final result = await compute(
+            _readDimensionsBatch, chunk.map((photo) => photo.path).toList());
+        if (!_isCurrent(generation)) return;
+        var changed = false;
+        for (final photo in chunk) {
+          if (!identical(_photoIndex[photo.path], photo)) continue;
+          final dims = result[photo.path];
+          if (dims == null) continue;
+          final ratio = dims.$1 / dims.$2;
+          if (ratio.isFinite && ratio > 0 && getAspectRatio(photo) != ratio) {
+            _aspectRatios[photo.path] = ratio;
+            photo.aspectRatio = ratio;
+            changed = true;
+          }
+        }
+        if (changed) {
+          layoutVersion++;
+          notifyListeners();
+        }
+        await Future<void>.delayed(Duration.zero);
+      }
+      try {
+        await _database.savePhotoCache(_photos);
+      } catch (_) {}
+    } catch (_) {}
+  }
+
   static Future<(Map<String, String>, Map<String, double>)> _readCachedThumbnails(
       ({String directory, List<({String path, String key})> entries}) request) async {
     final paths = <String, String>{};
@@ -334,11 +398,20 @@ class GalleryProvider extends ChangeNotifier {
           if (stat.type == FileSystemEntityType.file && stat.size > 0) {
             final dims = PhotoService.readDimensions(candidate);
             if (dims != null && dims.$1 > 0 && dims.$2 > 0) {
-              // Legacy thumbnails were center-cropped to large squares.
-              // Skip those so they regenerate with the photo's real aspect
-              // ratio, while all correct-aspect cached thumbnails still load
+              // Older builds produced square-cropped or square-scaled
+              // thumbnails. If the cached thumbnail is square but the
+              // original is not, regenerate it so the photo keeps its real
+              // aspect ratio. Correct-aspect cached thumbnails still load
               // instantly.
-              if (dims.$1 == dims.$2 && dims.$1 > 400) return;
+              if (dims.$1 == dims.$2) {
+                final original = PhotoService.readDimensions(entry.path);
+                if (original != null &&
+                    original.$1 > 0 &&
+                    original.$2 > 0 &&
+                    original.$1 != original.$2) {
+                  return;
+                }
+              }
               paths[entry.path] = candidate;
               ratios[entry.path] = dims.$1 / dims.$2;
             }
@@ -605,53 +678,34 @@ class GalleryProvider extends ChangeNotifier {
     return '${dt.year}-${_pad(dt.month)}-${_pad(dt.day)}';
   }
 
-  static const List<String> _monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ];
-
-  static const List<String> _weekdayNames = [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
-    'Sunday',
-  ];
-
   String _sectionLabel(String key) {
     final parts = key.split('-');
     if (parts.length == 1) return parts[0];
-    if (parts.length == 2) {
-      final month = int.tryParse(parts[1]);
-      if (month != null && month >= 1 && month <= 12) {
-        return '${_monthNames[month - 1]} ${parts[0]}';
-      }
-    }
-    if (parts.length == 3) {
-      final month = int.tryParse(parts[1]);
-      final day = int.tryParse(parts[2]);
-      final date = DateTime.tryParse(key);
-      if (month != null && day != null && date != null &&
-          month >= 1 && month <= 12) {
-        return '${_weekdayNames[date.weekday - 1]}, '
-            '${_monthNames[month - 1]} $day, ${parts[0]}';
-      }
-    }
-    return key;
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    if (year == null || month == null) return key;
+    if (parts.length == 2) return monthYearLabel(year, month);
+    final day = int.tryParse(parts[2]);
+    if (day == null) return key;
+    return daySectionLabel(year, month, day);
   }
 
   String _pad(int n) => n.toString().padLeft(2, '0');
 
   /// Target row height for the justified grid at each zoom level.
   /// Strictly increasing: zoom 0 = most zoomed out, 3 = most zoomed in.
-  double rowHeightForZoom() {
-    switch (_zoomLevel) {
-      case 0:
-        return 64;
-      case 1:
-        return 96;
-      case 2:
-        return 150;
-      default:
-        return 240;
-    }
+  /// Narrow (portrait phone) screens scale the rows down further so more
+  /// photos fit per row.
+  double rowHeightForZoom(double screenWidth) {
+    final base = switch (_zoomLevel) {
+      0 => 56.0,
+      1 => 88.0,
+      2 => 140.0,
+      _ => 220.0,
+    };
+    if (screenWidth < 600) return base * 0.7;
+    if (screenWidth < 900) return base * 0.85;
+    return base;
   }
 
   Future<void> toggleFavorite(PhotoItem photo) async {
@@ -843,14 +897,8 @@ class GalleryProvider extends ChangeNotifier {
         if (!await source.exists()) continue;
         final targetDir = Directory(p.dirname(item.originalPath));
         if (!await targetDir.exists()) await targetDir.create(recursive: true);
-        var target = item.originalPath;
-        var counter = 1;
-        final base = p.basenameWithoutExtension(item.originalPath);
-        final ext = p.extension(item.originalPath);
-        while (File(target).existsSync()) {
-          target = p.join(targetDir.path, '${base}_$counter$ext');
-          counter++;
-        }
+        final target = PhotoService.uniqueTargetPath(
+            targetDir.path, p.basename(item.originalPath));
         await source.rename(target);
         done.add(item.trashedPath);
         restored++;
@@ -925,14 +973,8 @@ class GalleryProvider extends ChangeNotifier {
       for (final entry in entries) {
         if (entry is! File) continue;
         try {
-          var target = p.join(library, p.basename(entry.path));
-          var counter = 1;
-          final base = p.basenameWithoutExtension(entry.path);
-          final ext = p.extension(entry.path);
-          while (File(target).existsSync()) {
-            target = p.join(library, '${base}_$counter$ext');
-            counter++;
-          }
+          final target =
+              PhotoService.uniqueTargetPath(library, p.basename(entry.path));
           await entry.rename(target);
           moved++;
         } catch (_) {}
@@ -1055,15 +1097,8 @@ class GalleryProvider extends ChangeNotifier {
       final targetDir = p.join(path, albumPath);
       try {
         await Directory(targetDir).create(recursive: true);
-        final target = p.join(targetDir, photo.name);
-        var unique = target;
-        var counter = 1;
-        while (File(unique).existsSync() && unique != photo.path) {
-          final ext = p.extension(photo.name);
-          final base = p.basenameWithoutExtension(photo.name);
-          unique = p.join(targetDir, '${base}_$counter$ext');
-          counter++;
-        }
+        final unique = PhotoService.uniqueTargetPath(targetDir, photo.name,
+            excludePath: photo.path);
         await File(photo.path).rename(unique);
         moved++;
       } catch (_) {}

@@ -96,7 +96,6 @@ class PhotoService {
           final relative =
               parent == rootAbs ? '' : p.relative(parent, from: rootAbs);
 
-          // EXIF date reading deferred to background enrichment.
           out.add(PhotoItem(
             path: file.path,
             name: p.basename(file.path),
@@ -304,6 +303,20 @@ class PhotoService {
     return out;
   }
 
+  static String uniqueTargetPath(String directory, String fileName,
+      {String? excludePath}) {
+    var target = p.join(directory, fileName);
+    if (target == excludePath || !File(target).existsSync()) return target;
+    final ext = p.extension(fileName);
+    final base = p.basenameWithoutExtension(fileName);
+    var counter = 1;
+    while (File(target).existsSync() && target != excludePath) {
+      target = p.join(directory, '${base}_$counter$ext');
+      counter++;
+    }
+    return target;
+  }
+
   static Future<void> importFile(String sourcePath, String libraryPath,
       {String? subFolder}) async {
     final fileName = p.basename(sourcePath);
@@ -313,14 +326,7 @@ class PhotoService {
       await Directory(targetDir).create(recursive: true);
     }
 
-    var targetPath = p.join(targetDir, fileName);
-    var counter = 1;
-    while (File(targetPath).existsSync()) {
-      final ext = p.extension(fileName);
-      final base = p.basenameWithoutExtension(fileName);
-      targetPath = p.join(targetDir, '${base}_$counter$ext');
-      counter++;
-    }
+    final targetPath = uniqueTargetPath(targetDir, fileName);
 
     await File(sourcePath).copy(targetPath);
     try {
@@ -332,12 +338,6 @@ class PhotoService {
   static Future<String> exportFile(String sourcePath, String targetPath) async {
     await File(sourcePath).copy(targetPath);
     return targetPath;
-  }
-
-  static double readAspectRatio(String path) {
-    final dims = readDimensions(path);
-    if (dims == null || dims.$1 <= 0 || dims.$2 <= 0) return 1.0;
-    return dims.$1 / dims.$2;
   }
 
   static (int, int)? readDimensions(String path) {

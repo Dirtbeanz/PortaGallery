@@ -165,11 +165,6 @@ class DatabaseService {
     return rows.map((r) => r['path'] as String).toSet();
   }
 
-  Future<void> clearFavorites() async {
-    final db = await database;
-    await db.delete('favorites');
-  }
-
   Future<void> saveNotes(String path, List<String> tags, String comment) async {
     final db = await database;
     await db.insert(

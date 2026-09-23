@@ -68,11 +68,12 @@ class DuplicateService {
               : i + batchSize);
       final results =
           await compute(_hashFileBatch, chunk.map((p) => p.path).toList());
+      final byPath = {for (final photo in chunk) photo.path: photo};
       for (final (path, hash) in results) {
         if (hash.isEmpty) continue;
-        hashes.putIfAbsent(hash, () => []).add(
-              chunk.firstWhere((photo) => photo.path == path),
-            );
+        final photo = byPath[path];
+        if (photo == null) continue;
+        hashes.putIfAbsent(hash, () => []).add(photo);
       }
       scanned += chunk.length;
       onProgress?.call(scanned, candidates.length);

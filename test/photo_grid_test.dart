@@ -38,7 +38,7 @@ void main() {
         previousHeight = 0;
         for (var zoom = 0; zoom < 4; zoom++) {
           provider.setZoom(zoom);
-          final height = provider.rowHeightForZoom();
+          final height = provider.rowHeightForZoom(width);
           expect(height, greaterThan(previousHeight));
           previousHeight = height;
           await tester.pumpWidget(ChangeNotifierProvider<GalleryProvider>.value(

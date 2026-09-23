@@ -10,8 +10,9 @@ experience — albums, favorites, search, zoom, tags, and more.
 
 ## Features
 
-- **Gallery grid with 4 zoom levels** — zoom buttons select row heights of
-  64, 96, 150, or 240 logical pixels on Linux and Android. Rows keep the
+- **Gallery grid with 4 zoom levels** — zoom buttons select base row heights of
+  56, 88, 140, or 220 logical pixels, scaled down further on narrow
+  (portrait phone) screens so more photos fit per row. Rows keep the
   same height at each zoom level, with variable-width, uncropped previews
   instead of forced square tiles. Rows can leave unused space at the right;
   very wide images fit within the available width without stretching.
@@ -76,9 +77,10 @@ Designed to keep large libraries responsive:
   visible rows plus a small margin are kept built. An 18,000-item widget
   regression test checks that initial thumbnail requests stay below 100 for
   its viewport and zoom configuration.
-- **Correct-aspect previews** — thumbnails preserve each photo's aspect ratio.
-  Legacy thumbnails that were center-cropped to large squares are detected and
-  regenerated, while all other cached thumbnails load instantly.
+- **Correct-aspect previews** — image dimensions are read from file headers in
+  a background pass after scanning, so photos are laid out with their real
+  aspect ratio without blocking thumbnail loading. Legacy square-cropped
+  thumbnails are detected against the original and regenerated.
 - **Thumbnail-only grid** — missing or failed thumbnails show placeholders;
   grid cells never fall back to decoding original photos.
 - **Cached startup** — SQLite supplies the initial photo list, filtered to the

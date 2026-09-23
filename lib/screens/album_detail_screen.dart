@@ -47,7 +47,8 @@ class AlbumDetailScreen extends StatelessWidget {
           Expanded(
             child: PhotoGrid(
               sections: sections,
-              targetRowHeight: provider.rowHeightForZoom(),
+              targetRowHeight:
+                  provider.rowHeightForZoom(MediaQuery.of(context).size.width),
               viewerPhotos: sorted,
             ),
           ),
