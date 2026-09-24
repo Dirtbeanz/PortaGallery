@@ -41,7 +41,7 @@ class _PhotoGridState extends State<PhotoGrid> {
   bool _showLabel = false;
   List<double> _sectionStarts = [];
   final List<double> _entryStarts = [];
-  ({String path, double delta})? _pendingAnchor;
+  ({String path, double fraction})? _pendingAnchor;
   // Cached justified-row layout, invalidated by content/width/rowHeight changes.
   List<List<_JustifiedRow>>? _layoutCache;
   final List<({int section, int row})> _entries = [];
@@ -112,7 +112,15 @@ class _PhotoGridState extends State<PhotoGrid> {
     } else {
       path = photos.first.path;
     }
-    _pendingAnchor = (path: path, delta: offset - _entryStarts[index]);
+    final entryStart = _entryStarts[index];
+    final nextStart = index + 1 < _entryStarts.length
+        ? _entryStarts[index + 1]
+        : entryStart + _headerHeight;
+    final entryHeight = nextStart - entryStart;
+    final fraction = entryHeight <= 0
+        ? 0.0
+        : ((offset - entryStart) / entryHeight).clamp(0.0, 1.0);
+    _pendingAnchor = (path: path, fraction: fraction);
   }
 
   void _restoreAnchor() {
@@ -130,12 +138,8 @@ class _PhotoGridState extends State<PhotoGrid> {
       for (final row in rows) {
         for (final item in row.items) {
           if (item.photo.path == anchor.path) {
-            final target = rowOffset + anchor.delta;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted || !_scrollController.hasClients) return;
-              _scrollController.jumpTo(target
-                  .clamp(0.0, _scrollController.position.maxScrollExtent));
-            });
+            final target = rowOffset + anchor.fraction * row.height;
+            _jumpToWithRetry(target, 3);
             return;
           }
         }
@@ -144,9 +148,25 @@ class _PhotoGridState extends State<PhotoGrid> {
     }
   }
 
+  void _jumpToWithRetry(double target, int attempts) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      // Right after a layout change the sliver only estimates its total
+      // extent from built children, so retry until the target is reachable.
+      if (target > position.maxScrollExtent && attempts > 0) {
+        _jumpToWithRetry(target, attempts - 1);
+        return;
+      }
+      _scrollController.jumpTo(
+          target.clamp(0.0, position.maxScrollExtent));
+      _onScroll();
+    });
+  }
+
   void _onScroll() {
     if (_entryStarts.isEmpty) return;
-    final offset = _scrollController.offset + 60;
+    final offset = _scrollController.offset + 1;
     var lo = 0;
     var hi = _entryStarts.length - 1;
     var index = 0;

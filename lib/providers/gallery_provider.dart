@@ -144,6 +144,9 @@ class GalleryProvider extends ChangeNotifier {
           duplicateCount: cached!.length - scoped.length,
         );
         notifyListeners();
+        // Load cached preview paths immediately so the grid fills in with
+        // previews while the background rescan runs.
+        unawaited(_loadExistingThumbnails(generation));
         // Fire-and-forget background rescan; it will notify when done.
         rescan();
       } else {
@@ -418,15 +421,18 @@ class GalleryProvider extends ChangeNotifier {
     final (paths, ratios) = await compute(
         _readCachedThumbnails, (directory: dir.path, entries: entries));
     if (!_isCurrent(generation)) return;
+    var changed = false;
     for (final photo in snapshot) {
       if (!identical(_photoIndex[photo.path], photo)) continue;
       final target = paths[photo.path];
       if (target == null || _thumbPaths.containsKey(photo.path)) continue;
       _thumbPaths[photo.path] = target;
       _thumbFailed.remove(photo.path);
+      changed = true;
       final ratio = ratios[photo.path];
       if (ratio != null) _setAspectRatio(photo, ratio);
     }
+    if (changed) notifyListeners();
   }
 
   bool _setAspectRatio(PhotoItem photo, double ratio) {
@@ -439,7 +445,7 @@ class GalleryProvider extends ChangeNotifier {
   }
 
   void requestThumbnails(List<PhotoItem> photos) {
-    if (_disposed || isLoading) return;
+    if (_disposed) return;
     var added = false;
     for (final photo in photos) {
       final current = _photoIndex[photo.path];
@@ -459,7 +465,7 @@ class GalleryProvider extends ChangeNotifier {
     _thumbing = true;
     var changed = 0;
     try {
-      while (!_disposed && !isLoading && _thumbPending.isNotEmpty) {
+      while (!_disposed && _thumbPending.isNotEmpty) {
         final generation = _generation;
         final batch = <PhotoItem>[];
         // Process pending paths in sorted order so files in the same folder

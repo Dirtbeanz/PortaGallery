@@ -203,9 +203,16 @@ Designed to keep large libraries (tested with ~18,000 items) responsive:
   work through files in path order, so reads are sequential instead of jumping
   around the disk. This matters most on spinning hard drives.
 - **Thumbnail-only grid** — missing or failed thumbnails show placeholders;
-  grid cells never fall back to decoding original photos. Cached thumbnails are
-  validated against the original's aspect ratio, so cropped, rotated, or
-  squished thumbnails from older builds are regenerated.
+  grid cells never fall back to decoding original photos. Previews for the
+  visible rows load first (newest first with the default sort), and cached
+  previews appear immediately at startup while the background rescan runs.
+  Cached thumbnails are validated against the original's aspect ratio, so
+  cropped, rotated, or squished thumbnails from older builds are regenerated.
+- **Rebuild previews** — Settings → *Rebuild thumbnails* clears the entire
+  preview cache and regenerates it with the current version. This is the
+  reliable fix for thumbnails that show a wrong orientation or cropping after
+  upgrading from an older version, because legacy preview files cannot always
+  be detected and corrected automatically.
 - **Cached startup** — SQLite supplies the initial photo list, filtered to the
   selected library root, while a background rescan checks for changes.
 - **Background indexing** — directory scanning, existing-thumbnail discovery,
@@ -332,6 +339,11 @@ hasn't mounted it — check the notification shade.
 **Map is blank.**
 Map tiles come from OpenStreetMap and need an internet connection. GPS scanning
 is done locally from EXIF headers.
+
+**Thumbnails show the wrong orientation or look cropped.**
+Usually caused by previews cached by an older version. Open Settings →
+*Rebuild thumbnails* to clear the preview cache and regenerate it with the
+current version.
 
 **The app lags after browsing a lot.**
 Report it with a diagnostic log: Settings → *Diagnostic log location* →
