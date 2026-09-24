@@ -28,8 +28,15 @@ anything to internal storage.
 > reports, feature requests, and code contributions are what make it better —
 > see [Contributing](#contributing).
 
+## Screenshots
+
+| Linux (AppImage) | Android (APK) |
+| :---: | :---: |
+| <img src="screenshots/linux-gallery.png" alt="PortaGallery on Linux showing the justified gallery with date sections" width="520"> | <img src="screenshots/android-gallery.jpg" alt="PortaGallery on Android showing the photo grid" width="220"> |
+
 ## Table of contents
 
+- [Screenshots](#screenshots)
 - [Why PortaGallery](#why-portagallery)
 - [Features](#features)
 - [Platform support](#platform-support)
