@@ -66,7 +66,6 @@ class GalleryProvider extends ChangeNotifier {
   int _generation = 0;
   Future<void> _scanTask = Future<void>.value();
   Future<void> _exifTask = Future<void>.value();
-  Future<void> _ratioTask = Future<void>.value();
   final Set<String> _thumbFailed = {};
 
   bool _isCurrent(int generation) => !_disposed && generation == _generation;
@@ -284,8 +283,7 @@ class GalleryProvider extends ChangeNotifier {
         await _loadExistingThumbnails(generation);
       } catch (_) {}
       if (!_isCurrent(generation)) return;
-      _exifTask = _exifTask.then((_) => _enrichExifDates(generation));
-      _ratioTask = _ratioTask.then((_) => _enrichAspectRatios(generation));
+      _exifTask = _exifTask.then((_) => _enrichHeaders(generation));
     } catch (_) {
     } finally {
       if (_isCurrent(generation)) {
@@ -295,62 +293,17 @@ class GalleryProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _enrichExifDates(int generation) async {
+  /// Reads EXIF dates and display dimensions in a single pass so each file
+  /// header is read once instead of twice. This roughly halves first-load
+  /// indexing traffic.
+  Future<void> _enrichHeaders(int generation) async {
     if (!_isCurrent(generation)) return;
     try {
       final candidates = _photos
           .where((photo) =>
               !photo.isVideo &&
-              photo.dateTaken == null &&
-              {'.jpg', '.jpeg', '.jpe', '.jfif'}.contains(
-                  p.extension(photo.path).toLowerCase()))
-          .toList()
-        ..sort((a, b) => a.path.compareTo(b.path));
-      const chunkSize = 200;
-      for (var i = 0; i < candidates.length; i += chunkSize) {
-        if (!_isCurrent(generation)) return;
-        final chunk = candidates.sublist(
-            i, i + chunkSize > candidates.length ? candidates.length : i + chunkSize);
-        final result = await compute(PhotoService.readExifDatesBulk,
-            chunk.map((photo) => photo.path).toList());
-        if (!_isCurrent(generation)) return;
-        var changed = false;
-        for (final photo in chunk) {
-          if (!identical(_photoIndex[photo.path], photo)) continue;
-          final date = result[photo.path];
-          if (date != null && photo.dateTaken != date) {
-            photo.dateTaken = date;
-            changed = true;
-          }
-        }
-        if (changed) {
-          _sectionsDirty = true;
-          _visiblePhotosDirty = true;
-          if (sortMode.field == SortField.dateTaken) notifyListeners();
-        }
-      }
-    } catch (_) {}
-  }
-
-  static Future<Map<String, (int, int)>> _readDimensionsBatch(
-      List<String> paths) async {
-    final out = <String, (int, int)>{};
-    for (final path in paths) {
-      final dims = PhotoService.readDimensions(path);
-      if (dims != null && dims.$1 > 0 && dims.$2 > 0) out[path] = dims;
-    }
-    return out;
-  }
-
-  Future<void> _enrichAspectRatios(int generation) async {
-    if (!_isCurrent(generation)) return;
-    try {
-      final candidates = _photos
-          .where((photo) =>
-              !photo.isVideo &&
-              photo.aspectRatio == 1.0 &&
-              !_aspectRatios.containsKey(photo.path) &&
-              !PhotoService.isRawPath(photo.path))
+              !PhotoService.isRawPath(photo.path) &&
+              (photo.dateTaken == null || photo.aspectRatio == 1.0))
           .toList()
         ..sort((a, b) => a.path.compareTo(b.path));
       if (candidates.isEmpty) return;
@@ -364,21 +317,30 @@ class GalleryProvider extends ChangeNotifier {
             i + chunkSize > candidates.length
                 ? candidates.length
                 : i + chunkSize);
-        final result = await compute(
-            _readDimensionsBatch, chunk.map((photo) => photo.path).toList());
+        final result = await compute(PhotoService.readHeadersBatch,
+            chunk.map((photo) => photo.path).toList());
         if (!_isCurrent(generation)) return;
-        var changed = false;
-        for (final photo in chunk) {
-          if (!identical(_photoIndex[photo.path], photo)) continue;
-          final dims = result[photo.path];
-          if (dims == null) continue;
-          final ratio = dims.$1 / dims.$2;
-          if (ratio.isFinite && ratio > 0 && _setAspectRatio(photo, ratio)) {
-            changed = true;
+        var ratiosChanged = false;
+        var datesChanged = false;
+        for (final (path, date, width, height) in result) {
+          final photo = _photoIndex[path];
+          if (photo == null || !identical(photo, _photoIndex[path])) continue;
+          if (date != null && photo.dateTaken == null) {
+            photo.dateTaken = date;
+            datesChanged = true;
+          }
+          if (width != null && height != null && width > 0 && height > 0) {
+            final ratio = width / height;
+            if (ratio.isFinite && ratio > 0 && _setAspectRatio(photo, ratio)) {
+              ratiosChanged = true;
+            }
           }
         }
-        if (changed) {
-          layoutVersion++;
+        if (datesChanged) {
+          _sectionsDirty = true;
+          _visiblePhotosDirty = true;
+        }
+        if (ratiosChanged || datesChanged) {
           notifyListeners();
         }
         await Future<void>.delayed(Duration.zero);
@@ -893,6 +855,16 @@ class GalleryProvider extends ChangeNotifier {
       counter++;
     }
     return candidate;
+  }
+
+  Future<int> rebuildThumbnails() async {
+    final removed = await ThumbnailService.clearCache();
+    _thumbPaths.clear();
+    _thumbFailed.clear();
+    _thumbPending.clear();
+    _thumbInFlight.clear();
+    notifyListeners();
+    return removed;
   }
 
   Future<int> moveToTrash(List<PhotoItem> photos) async {

@@ -70,6 +70,20 @@ class ThumbnailService {
     return p.join(dir.path, '${key(photo)}.jpg');
   }
 
+  static Future<int> clearCache() async {
+    final dir = await cacheDir();
+    var removed = 0;
+    try {
+      await for (final entity in dir.list()) {
+        try {
+          await entity.delete(recursive: true);
+          removed++;
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return removed;
+  }
+
   static Future<bool> generate(PhotoItem photo) async {
     Directory? temporary;
     try {

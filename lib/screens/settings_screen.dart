@@ -125,6 +125,13 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () => _rescan(context, provider),
               ),
               ListTile(
+                leading: const Icon(Icons.image_outlined),
+                title: const Text('Rebuild thumbnails'),
+                subtitle: const Text(
+                    'Delete cached previews and regenerate them'),
+                onTap: () => _rebuildThumbnails(context, provider),
+              ),
+              ListTile(
                 leading: const Icon(Icons.delete_outline),
                 title: const Text('Trash'),
                 subtitle: Text(provider.trashCount == 0
@@ -342,6 +349,34 @@ class SettingsScreen extends StatelessWidget {
 
     await provider.setLibraryPath(trimmed);
     if (context.mounted) _snack(context, 'Library updated');
+  }
+
+  Future<void> _rebuildThumbnails(
+      BuildContext context, GalleryProvider provider) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rebuild thumbnails?'),
+        content: const Text(
+            'All cached previews are deleted and regenerated with the '
+            'current version. This can take a while on a slow drive.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Rebuild'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final removed = await provider.rebuildThumbnails();
+    if (context.mounted) {
+      _snack(context, 'Cleared $removed cached preview(s)');
+    }
   }
 
   Future<void> _rescan(BuildContext context, GalleryProvider provider) async {

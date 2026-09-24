@@ -263,6 +263,10 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
 
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      Navigator.of(context).maybePop();
+      return KeyEventResult.handled;
+    }
     if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
       if (_index > 0) _goTo(_index - 1);
       return KeyEventResult.handled;

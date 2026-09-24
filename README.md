@@ -6,7 +6,7 @@
 
 **A portable photo and video gallery for external drives — your library, on any device.**
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Dirtbeanz/PortaGallery?label=release)](https://github.com/Dirtbeanz/PortaGallery/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Android-9cf.svg)](#platform-support)
 [![Flutter](https://img.shields.io/badge/Flutter-3.29-02569B.svg?logo=flutter&logoColor=white)](https://flutter.dev)
@@ -366,7 +366,7 @@ Contributions are very welcome — this project is better with more hands on it.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[MIT](LICENSE).
 
 ## Support
 

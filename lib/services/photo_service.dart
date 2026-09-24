@@ -474,74 +474,103 @@ class PhotoService {
   }
 
   /// Reads the embedded EXIF thumbnail (IFD1 JPEG) from a JPEG file.
-  /// Reads only the first 256KB instead of the whole file, which makes
-  /// thumbnail generation far cheaper on slow drives. Also returns the
-  /// image's EXIF orientation so callers can rotate the thumbnail correctly.
+  /// Reads only a small prefix of the file instead of decoding the whole
+  /// original, which makes thumbnail generation far cheaper on slow drives.
+  /// Also returns the image's EXIF orientation so callers can rotate the
+  /// thumbnail correctly.
   static Future<(Uint8List, int, int, int)?> readExifThumbnail(
       String path) async {
+    final small = await _readPrefix(path, 65536);
+    if (small == null) return null;
+    final quick = _scanThumb(small);
+    if (quick.thumb != null) return quick.thumb;
+    if (!quick.needMore) return null;
+    final large = await _readPrefix(path, 262144);
+    if (large == null) return null;
+    return _scanThumb(large).thumb;
+  }
+
+  static Future<Uint8List?> _readPrefix(String path, int size) async {
     RandomAccessFile? raf;
     try {
       raf = await File(path).open();
-      final header = await raf.read(262144);
-      if (header.length < 16 || header[0] != 0xFF || header[1] != 0xD8) {
-        return null;
-      }
-      var off = 2;
-      while (off + 9 < header.length) {
-        if (header[off] != 0xFF) {
-          off++;
-          continue;
-        }
-        final marker = header[off + 1];
-        if (marker == 0xD8 || marker == 0xD9) {
-          off += 2;
-          continue;
-        }
-        if (marker >= 0xD0 && marker <= 0xDA) {
-          off += 2;
-          continue;
-        }
-        if (off + 3 >= header.length) break;
-        final len = (header[off + 2] << 8) + header[off + 3];
-        if (len < 2) break;
-        if (marker == 0xE1) {
-          final thumb = _thumbFromApp1(header, off + 4, len - 2);
-          if (thumb != null) return thumb;
-        }
-        off += 2 + len;
-      }
+      return await raf.read(size);
     } catch (_) {
+      return null;
     } finally {
       try {
         await raf?.close();
       } catch (_) {}
     }
-    return null;
   }
 
-  static (Uint8List, int, int, int)? _thumbFromApp1(
+  static ({(Uint8List, int, int, int)? thumb, bool needMore}) _scanThumb(
+      Uint8List header) {
+    if (header.length < 16 || header[0] != 0xFF || header[1] != 0xD8) {
+      return (thumb: null, needMore: false);
+    }
+    var off = 2;
+    while (off + 9 < header.length) {
+      if (header[off] != 0xFF) {
+        off++;
+        continue;
+      }
+      final marker = header[off + 1];
+      if (marker == 0xD8 || marker == 0xD9) {
+        off += 2;
+        continue;
+      }
+      if (marker >= 0xD0 && marker <= 0xDA) {
+        off += 2;
+        continue;
+      }
+      if (off + 3 >= header.length) break;
+      final len = (header[off + 2] << 8) + header[off + 3];
+      if (len < 2) break;
+      final segmentEnd = off + 2 + len;
+      if (marker == 0xE1) {
+        if (segmentEnd > header.length) {
+          return (thumb: null, needMore: true);
+        }
+        final (thumb, needMore) = _thumbFromApp1(header, off + 4, len - 2);
+        if (thumb != null) return (thumb: thumb, needMore: false);
+        if (needMore) return (thumb: null, needMore: true);
+      }
+      if (marker >= 0xC0 &&
+          marker <= 0xCF &&
+          marker != 0xC4 &&
+          marker != 0xC8 &&
+          marker != 0xCC) {
+        break;
+      }
+      off = segmentEnd;
+    }
+    return (thumb: null, needMore: false);
+  }
+
+  static ((Uint8List, int, int, int)?, bool) _thumbFromApp1(
       List<int> b, int start, int length) {
     try {
-      if (length < 14 || start + 8 > b.length) return null;
+      if (length < 14 || start + 8 > b.length) return (null, false);
       if (!(b[start] == 0x45 &&
           b[start + 1] == 0x78 &&
           b[start + 2] == 0x69 &&
           b[start + 3] == 0x66)) {
-        return null;
+        return (null, false);
       }
       final tiff = start + 6;
       final little = b[tiff] == 0x49;
       final tag = u16(b, tiff + 2, little);
-      if (!(tag == 0x002A || tag == 0x2A00)) return null;
+      if (!(tag == 0x002A || tag == 0x2A00)) return (null, false);
       final ifd0 = tiff + u32(b, tiff + 4, little);
-      if (ifd0 + 2 > b.length) return null;
+      if (ifd0 + 2 > b.length) return (null, false);
       final count0 = u16(b, ifd0, little);
       final nextOffset = ifd0 + 2 + count0 * 12;
-      if (nextOffset + 4 > b.length) return null;
+      if (nextOffset + 4 > b.length) return (null, false);
       final ifd1Offset = u32(b, nextOffset, little);
-      if (ifd1Offset == 0) return null;
+      if (ifd1Offset == 0) return (null, false);
       final ifd1 = tiff + ifd1Offset;
-      if (ifd1 + 2 > b.length) return null;
+      if (ifd1 + 2 > b.length) return (null, false);
       final count1 = u16(b, ifd1, little);
       var entry = ifd1 + 2;
       int? thumbOffset;
@@ -552,21 +581,95 @@ class PhotoService {
         if (t == 0x0202) thumbLength = u32(b, entry + 8, little);
         entry += 12;
       }
-      if (thumbOffset == null || thumbLength == null) return null;
+      if (thumbOffset == null || thumbLength == null) return (null, false);
       final begin = tiff + thumbOffset;
       final end = begin + thumbLength;
-      if (thumbLength < 100 || begin < 0 || end > b.length) return null;
+      if (end > b.length) return (null, true);
+      if (thumbLength < 100 || begin < 0) return (null, false);
       final bytes = Uint8List.fromList(b.sublist(begin, end));
       if (bytes.length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8) {
-        return null;
+        return (null, false);
       }
       final dims = _jpegSize(bytes);
-      if (dims == null) return null;
+      if (dims == null) return (null, false);
       final orientation = exifOrientation(b, start, length);
-      return (bytes, dims.$1, dims.$2, orientation);
+      return ((bytes, dims.$1, dims.$2, orientation), false);
     } catch (_) {
-      return null;
+      return (null, false);
     }
+  }
+
+  /// Reads the EXIF date and display dimensions for each file in one pass.
+  /// JPEG headers are parsed from a single 64KB read; other formats fall
+  /// back to a header-only dimension read.
+  static Future<List<(String, DateTime?, int?, int?)>> readHeadersBatch(
+      List<String> paths) async {
+    final out = <(String, DateTime?, int?, int?)>[];
+    for (final path in paths) {
+      DateTime? date;
+      int? width;
+      int? height;
+      try {
+        final file = File(path);
+        final raf = await file.open();
+        final header = await raf.read(65536);
+        await raf.close();
+        if (header.length >= 12 && header[0] == 0xFF && header[1] == 0xD8) {
+          var off = 2;
+          var orientation = 1;
+          while (off + 9 < header.length) {
+            if (header[off] != 0xFF) {
+              off++;
+              continue;
+            }
+            final marker = header[off + 1];
+            if (marker == 0xD8 || marker == 0xD9) {
+              off += 2;
+              continue;
+            }
+            if (marker >= 0xD0 && marker <= 0xDA) {
+              off += 2;
+              continue;
+            }
+            if (off + 3 >= header.length) break;
+            final len = (header[off + 2] << 8) + header[off + 3];
+            if (len < 2) break;
+            if (marker == 0xE1 && off + 2 + len <= header.length) {
+              date ??= _parseExifDate(header, off + 4, len - 2);
+              orientation = exifOrientation(header, off + 4, len - 2);
+            }
+            if (marker >= 0xC0 &&
+                marker <= 0xCF &&
+                marker != 0xC4 &&
+                marker != 0xC8 &&
+                marker != 0xCC) {
+              final h = (header[off + 5] << 8) + header[off + 6];
+              final w = (header[off + 7] << 8) + header[off + 8];
+              if (h > 0 && w > 0) {
+                if (orientation >= 5 && orientation <= 8) {
+                  width = h;
+                  height = w;
+                } else {
+                  width = w;
+                  height = h;
+                }
+              }
+              break;
+            }
+            off += 2 + len;
+          }
+        }
+        if (width == null || height == null) {
+          final dims = readDimensions(path);
+          if (dims != null && dims.$1 > 0 && dims.$2 > 0) {
+            width = dims.$1;
+            height = dims.$2;
+          }
+        }
+      } catch (_) {}
+      out.add((path, date, width, height));
+    }
+    return out;
   }
 
   static int exifOrientation(List<int> b, int start, int length) {
