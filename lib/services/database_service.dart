@@ -27,7 +27,7 @@ class DatabaseService {
     _db = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 7,
+        version: 8,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE favorites (
@@ -64,7 +64,8 @@ class DatabaseService {
               modified_at INTEGER NOT NULL,
               is_video INTEGER NOT NULL,
               aspect_ratio REAL NOT NULL DEFAULT 1.0,
-              date_taken INTEGER
+              date_taken INTEGER,
+              ratio_version INTEGER NOT NULL DEFAULT 0
             )
           ''');
           await db.execute('''
@@ -152,6 +153,10 @@ class DatabaseService {
                 quarter_turns INTEGER NOT NULL
               )
             ''');
+          }
+          if (oldVersion < 8) {
+            await db.execute(
+                'ALTER TABLE photo_cache ADD COLUMN ratio_version INTEGER NOT NULL DEFAULT 0');
           }
         },
       ),
@@ -384,6 +389,7 @@ class DatabaseService {
           'is_video': photo.isVideo ? 1 : 0,
           'aspect_ratio': photo.aspectRatio,
           'date_taken': photo.dateTaken?.millisecondsSinceEpoch,
+          'ratio_version': 2,
         });
       }
       await batch.commit(noResult: true);
@@ -396,7 +402,10 @@ class DatabaseService {
     if (rows.isEmpty) return null;
     return rows.map((r) {
       final ratioRaw = r['aspect_ratio'];
-      final ratio = ratioRaw is num && ratioRaw > 0
+      final ratioVersionRaw = r['ratio_version'];
+      final ratioVersion =
+          ratioVersionRaw is int ? ratioVersionRaw : 0;
+      final ratio = ratioVersion >= 2 && ratioRaw is num && ratioRaw > 0
           ? ratioRaw.toDouble()
           : 1.0;
       final dateRaw = r['date_taken'];

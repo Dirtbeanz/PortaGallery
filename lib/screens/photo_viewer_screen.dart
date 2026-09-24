@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -40,10 +41,40 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
 
   PhotoItem get _current => _photos[_index];
 
+  Timer? _preloadTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _schedulePreload());
+  }
+
   @override
   void dispose() {
+    _preloadTimer?.cancel();
     _controller.dispose();
     super.dispose();
+  }
+
+  void _schedulePreload() {
+    _preloadTimer?.cancel();
+    _preloadTimer = Timer(const Duration(milliseconds: 350), _preloadNeighbors);
+  }
+
+  void _preloadNeighbors() {
+    if (!mounted) return;
+    for (final i in [_index - 1, _index + 1]) {
+      if (i < 0 || i >= _photos.length) continue;
+      final photo = _photos[i];
+      if (photo.isVideo) continue;
+      try {
+        precacheImage(
+          _imageProvider(photo, context),
+          context,
+          onError: (_, __) {},
+        );
+      } catch (_) {}
+    }
   }
 
   void _toggleUi() => setState(() => _uiVisible = !_uiVisible);
@@ -138,7 +169,10 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
             PhotoViewGallery.builder(
               pageController: _controller,
               itemCount: _photos.length,
-              onPageChanged: (i) => setState(() => _index = i),
+              onPageChanged: (i) {
+                setState(() => _index = i);
+                _schedulePreload();
+              },
               backgroundDecoration: const BoxDecoration(color: Colors.black),
               builder: (context, index) {
                 final photo = _photos[index];

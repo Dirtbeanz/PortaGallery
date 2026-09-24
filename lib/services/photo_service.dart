@@ -432,6 +432,47 @@ class PhotoService {
     return null;
   }
 
+  static Future<int> readExifOrientation(String path) async {
+    RandomAccessFile? raf;
+    try {
+      raf = await File(path).open();
+      final header = await raf.read(65536);
+      if (header.length < 12 || header[0] != 0xFF || header[1] != 0xD8) {
+        return 1;
+      }
+      var off = 2;
+      while (off + 9 < header.length) {
+        if (header[off] != 0xFF) {
+          off++;
+          continue;
+        }
+        final marker = header[off + 1];
+        if (marker == 0xD8 || marker == 0xD9) {
+          off += 2;
+          continue;
+        }
+        if (marker >= 0xD0 && marker <= 0xDA) {
+          off += 2;
+          continue;
+        }
+        if (off + 3 >= header.length) break;
+        final len = (header[off + 2] << 8) + header[off + 3];
+        if (len < 2) break;
+        if (marker == 0xE1) {
+          final orientation = exifOrientation(header, off + 4, len - 2);
+          if (orientation != 1) return orientation;
+        }
+        off += 2 + len;
+      }
+    } catch (_) {
+    } finally {
+      try {
+        await raf?.close();
+      } catch (_) {}
+    }
+    return 1;
+  }
+
   /// Reads the embedded EXIF thumbnail (IFD1 JPEG) from a JPEG file.
   /// Reads only the first 256KB instead of the whole file, which makes
   /// thumbnail generation far cheaper on slow drives. Also returns the

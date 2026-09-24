@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -52,7 +53,9 @@ class _HomeScreenState extends State<HomeScreen> {
       const FavoritesView(),
     ];
 
-    return Scaffold(
+    return _withShortcuts(
+      provider,
+      Scaffold(
       appBar: AppBar(
         title: _searching
             ? TextField(
@@ -165,6 +168,36 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    ));
+  }
+
+  Widget _withShortcuts(GalleryProvider provider, Widget child) {
+    if (Platform.isAndroid || Platform.isIOS) return child;
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true): () =>
+            _toggleSearch(provider),
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          if (_searching) _toggleSearch(provider);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyI, control: true): () =>
+            _importPhotos(context, provider),
+        const SingleActivator(LogicalKeyboardKey.f5): () =>
+            provider.rescan(),
+        const SingleActivator(LogicalKeyboardKey.equal, control: true): () =>
+            provider.setZoom(provider.zoomLevel + 1),
+        const SingleActivator(LogicalKeyboardKey.minus, control: true): () =>
+            provider.setZoom(provider.zoomLevel - 1),
+        const SingleActivator(LogicalKeyboardKey.digit1): () =>
+            provider.setZoom(0),
+        const SingleActivator(LogicalKeyboardKey.digit2): () =>
+            provider.setZoom(1),
+        const SingleActivator(LogicalKeyboardKey.digit3): () =>
+            provider.setZoom(2),
+        const SingleActivator(LogicalKeyboardKey.digit4): () =>
+            provider.setZoom(3),
+      },
+      child: Focus(autofocus: true, child: child),
     );
   }
 

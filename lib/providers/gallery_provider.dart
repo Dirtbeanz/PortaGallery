@@ -53,6 +53,7 @@ class GalleryProvider extends ChangeNotifier {
   String? libraryPath;
   bool isConfigured = false;
   bool isLoading = false;
+  bool isIndexing = false;
   bool showFavoritesOnly = false;
   String searchQuery = '';
   int _zoomLevel = 1;
@@ -353,6 +354,8 @@ class GalleryProvider extends ChangeNotifier {
           .toList()
         ..sort((a, b) => a.path.compareTo(b.path));
       if (candidates.isEmpty) return;
+      isIndexing = true;
+      notifyListeners();
       const chunkSize = 500;
       for (var i = 0; i < candidates.length; i += chunkSize) {
         if (!_isCurrent(generation)) return;
@@ -383,7 +386,13 @@ class GalleryProvider extends ChangeNotifier {
       try {
         await _database.savePhotoCache(_photos);
       } catch (_) {}
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (isIndexing) {
+        isIndexing = false;
+        notifyListeners();
+      }
+    }
   }
 
   static Future<(Map<String, String>, Map<String, double>)> _readCachedThumbnails(
@@ -413,6 +422,18 @@ class GalleryProvider extends ChangeNotifier {
                 final relative =
                     (thumbRatio - originalRatio).abs() / originalRatio;
                 if (relative > 0.05) return;
+              }
+              // Rotations of 180°/flips keep the same aspect ratio, so they
+              // cannot be detected from dimensions. Regenerate cached
+              // thumbnails whose original carries one of those orientations.
+              final orientation =
+                  await PhotoService.readExifOrientation(entry.path);
+              if (orientation == 2 ||
+                  orientation == 3 ||
+                  orientation == 4 ||
+                  orientation == 5 ||
+                  orientation == 7) {
+                return;
               }
               paths[entry.path] = candidate;
               ratios[entry.path] = thumbRatio;
@@ -723,9 +744,9 @@ class GalleryProvider extends ChangeNotifier {
   double rowHeightForZoom(double screenWidth) {
     final base = switch (_zoomLevel) {
       0 => 56.0,
-      1 => 88.0,
-      2 => 140.0,
-      _ => 220.0,
+      1 => 72.0,
+      2 => 112.0,
+      _ => 170.0,
     };
     if (screenWidth < 600) return base * 0.7;
     if (screenWidth < 900) return base * 0.85;

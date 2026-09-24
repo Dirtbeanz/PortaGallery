@@ -34,7 +34,8 @@ class _PhotosViewState extends State<PhotosView> {
 
     return Column(
       children: [
-        if (provider.isLoading) const LinearProgressIndicator(minHeight: 2),
+        if (provider.isLoading || provider.isIndexing)
+          const LinearProgressIndicator(minHeight: 2),
         _Toolbar(
           provider: provider,
           selectionMode: _selectionMode,

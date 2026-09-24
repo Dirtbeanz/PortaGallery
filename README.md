@@ -64,7 +64,7 @@ PortaGallery is built for the opposite case:
   can leave space at the right; very wide images are clamped to the viewport
   without stretching.
 - **4 zoom levels** with screen-aware sizing — base row heights of
-  `56 / 88 / 140 / 220` logical pixels, scaled down further on narrow
+  `56 / 72 / 112 / 170` logical pixels, scaled down further on narrow
   (portrait phone) screens.
 - **Zoom-aware date groups** — years at the widest zoom, months next, then
   individual days labelled with the weekday (e.g. *"Friday, September 18, 2026"*).
@@ -98,7 +98,8 @@ PortaGallery is built for the opposite case:
 ### Viewing
 
 - **Full-screen viewer** — pinch-to-zoom, swipe between photos, on-screen
-  arrows and keyboard `←`/`→` navigation.
+  arrows and keyboard `←`/`→` navigation. The previous and next photos are
+  preloaded, so swiping usually shows them instantly.
 - **Rotate photos** — rotate any photo 90° at a time (left or right); the
   rotation is saved and applied in the grid and viewer.
 - **EXIF metadata panel** — dimensions, date taken, camera, ISO, aperture,
@@ -108,6 +109,18 @@ PortaGallery is built for the opposite case:
   thumbnails on Linux.
 - **Map view** — browse geotagged photos on an OpenStreetMap map; it
   auto-centers on your most recent photo's location.
+
+### Desktop keyboard shortcuts (Linux)
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl` + `F` | Search |
+| `Esc` | Close search |
+| `Ctrl` + `I` | Import photos |
+| `F5` | Rescan library |
+| `Ctrl` + `+` / `Ctrl` + `-` | Zoom in / out |
+| `1` – `4` | Jump to zoom level |
+| `←` / `→` | Previous / next photo (in the viewer) |
 
 ### Library & data
 
@@ -205,6 +218,15 @@ Designed to keep large libraries (tested with ~18,000 items) responsive:
 
 Loading new previews while scrolling is bounded by drive speed — an external
 HDD is noticeably slower than an SSD.
+
+### First run after installing or updating
+
+The first launch scans the library, then reads image headers in the background
+to fix aspect ratios and enrich EXIF dates. A thin progress bar at the top
+indicates this indexing. On a large library stored on a hard drive this can
+take a few minutes, and previews may appear as placeholders while their
+thumbnails are generated. Results are cached in SQLite, so following launches
+are fast — only new or changed files are re-processed.
 
 ## Supported formats
 

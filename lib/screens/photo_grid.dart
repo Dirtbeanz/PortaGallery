@@ -33,13 +33,15 @@ class PhotoGrid extends StatefulWidget {
 
 class _PhotoGridState extends State<PhotoGrid> {
   static const double _headerHeight = 46;
+  static const double _spacing = 2;
 
   final ScrollController _scrollController = ScrollController();
   Timer? _hideTimer;
   String? _activeLabel;
   bool _showLabel = false;
   List<double> _sectionStarts = [];
-  String? _pendingAnchor;
+  final List<double> _entryStarts = [];
+  ({String path, double delta})? _pendingAnchor;
   // Cached justified-row layout, invalidated by content/width/rowHeight changes.
   List<List<_JustifiedRow>>? _layoutCache;
   final List<({int section, int row})> _entries = [];
@@ -78,23 +80,39 @@ class _PhotoGridState extends State<PhotoGrid> {
 
   void _captureAnchor(PhotoGrid oldWidget) {
     if (!_scrollController.hasClients) return;
-    if (oldWidget.sections.isEmpty || _sectionStarts.isEmpty) return;
+    if (oldWidget.sections.isEmpty || _entryStarts.isEmpty) return;
     final offset = _scrollController.offset + 8;
     var lo = 0;
-    var hi = _sectionStarts.length - 1;
+    var hi = _entryStarts.length - 1;
     var index = -1;
     while (lo <= hi) {
       final mid = (lo + hi) >> 1;
-      if (_sectionStarts[mid] <= offset) {
+      if (_entryStarts[mid] <= offset) {
         index = mid;
         lo = mid + 1;
       } else {
         hi = mid - 1;
       }
     }
-    if (index < 0 || index >= oldWidget.sections.length) return;
-    final photos = oldWidget.sections[index].photos;
-    _pendingAnchor = photos.isNotEmpty ? photos.first.path : null;
+    if (index < 0 || index >= _entries.length) return;
+
+    // Anchor to the first visible entry. Headers anchor to the section's
+    // first photo; rows anchor to the row's first photo. The delta keeps the
+    // exact scroll position inside the entry so zooming does not jump.
+    final entry = _entries[index];
+    if (entry.section >= oldWidget.sections.length) return;
+    final photos = oldWidget.sections[entry.section].photos;
+    if (photos.isEmpty) return;
+    final String path;
+    if (entry.row >= 0 && _layoutCache != null &&
+        entry.section < _layoutCache!.length &&
+        entry.row < _layoutCache![entry.section].length) {
+      final items = _layoutCache![entry.section][entry.row].items;
+      path = items.isNotEmpty ? items.first.photo.path : photos.first.path;
+    } else {
+      path = photos.first.path;
+    }
+    _pendingAnchor = (path: path, delta: offset - _entryStarts[index]);
   }
 
   void _restoreAnchor() {
@@ -103,39 +121,48 @@ class _PhotoGridState extends State<PhotoGrid> {
     _pendingAnchor = null;
 
     for (var s = 0; s < widget.sections.length; s++) {
-      final photos = widget.sections[s].photos;
-      if (photos.isEmpty) continue;
-      if (photos.first.path == anchor || photos.any((p) => p.path == anchor)) {
-        final target = _sectionStarts[s];
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || !_scrollController.hasClients) return;
-          _scrollController.jumpTo(
-              target.clamp(0.0, _scrollController.position.maxScrollExtent));
-        });
-        break;
+      final rows = _layoutCache != null && s < _layoutCache!.length
+          ? _layoutCache![s]
+          : const <_JustifiedRow>[];
+      var rowOffset = _sectionStarts.length > s
+          ? _sectionStarts[s] + _headerHeight
+          : 0.0;
+      for (final row in rows) {
+        for (final item in row.items) {
+          if (item.photo.path == anchor.path) {
+            final target = rowOffset + anchor.delta;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || !_scrollController.hasClients) return;
+              _scrollController.jumpTo(target
+                  .clamp(0.0, _scrollController.position.maxScrollExtent));
+            });
+            return;
+          }
+        }
+        rowOffset += row.height + _spacing;
       }
     }
   }
 
   void _onScroll() {
-    if (_sectionStarts.isEmpty) return;
+    if (_entryStarts.isEmpty) return;
     final offset = _scrollController.offset + 60;
-    // Binary search — the linear scan ran on every scroll frame and got
-    // expensive with thousands of day-sections.
     var lo = 0;
-    var hi = _sectionStarts.length - 1;
+    var hi = _entryStarts.length - 1;
     var index = 0;
     while (lo <= hi) {
       final mid = (lo + hi) >> 1;
-      if (_sectionStarts[mid] <= offset) {
+      if (_entryStarts[mid] <= offset) {
         index = mid;
         lo = mid + 1;
       } else {
         hi = mid - 1;
       }
     }
-    if (index >= widget.sections.length) return;
-    final label = widget.sections[index].header;
+    if (index >= _entries.length) return;
+    final section = _entries[index].section;
+    if (section >= widget.sections.length) return;
+    final label = widget.sections[section].header;
     if (label != _activeLabel || !_showLabel) {
       setState(() {
         _activeLabel = label;
@@ -211,16 +238,19 @@ class _PhotoGridState extends State<PhotoGrid> {
               _buildRows(section.photos, width, hPadding, spacing),
           ];
           _entries.clear();
+          _entryStarts.clear();
           _sectionStarts = [];
           var offset = 0.0;
           for (var s = 0; s < widget.sections.length; s++) {
             _sectionStarts.add(offset);
             _entries.add((section: s, row: -1));
+            _entryStarts.add(offset);
             offset += _headerHeight;
             final rows = _layoutCache![s];
             for (var r = 0; r < rows.length; r++) {
               _entries.add((section: s, row: r));
-              offset += rows[r].height + spacing;
+              _entryStarts.add(offset);
+              offset += rows[r].height + _spacing;
             }
           }
         }
